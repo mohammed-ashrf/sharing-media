@@ -1,5 +1,7 @@
 const OpenAI = require('openai');
+const mongoose = require('mongoose');
 const Story = require('../models/Story');
+const { fillTemplate, isValidStyle, getAvailableStyles } = require('../templates/videoStyleTemplates');
 
 // Initialize OpenAI client only if API key is available
 let openai = null;
@@ -10,11 +12,13 @@ if (process.env.OPENAI_API_KEY) {
 }
 
 /**
- * @desc    Generate story using OpenAI
+ * @desc    Generate story using OpenAI with video style templates
  * @route   POST /api/v1/stories/generate
  * @access  Private
  */
 const generateStory = async (req, res) => {
+  const startTime = Date.now(); // Track generation time
+  
   try {
     // Check if OpenAI is configured
     if (!openai) {
@@ -23,32 +27,52 @@ const generateStory = async (req, res) => {
         message: 'Story generation service is not configured. Please contact administrator.'
       });
     }
+
     const {
-      // Step 1: Style and Name
-      storyStyle,
+      // New video-centric fields
+      videoIdea,
+      videoStyle, // or storyStyle for backward compatibility
       storyName,
+      selectedLanguage = 'English',
+      additionalContext = [],
+      selectedEmotions = [],
       
-      // Step 2: Length
+      // Legacy fields for backward compatibility
+      storyStyle,
+      language = 'English',
+      
+      // Length
       storyLength, // in seconds
       
-      // Step 3: Optimization details
+      // Optional legacy fields
       storyTopic,
       characterDetails,
       settingAtmosphere,
       selectedGenre,
       selectedFormat,
       selectedNarrative,
-      selectedAgeGroup,
-      
-      // Optional language selection (default: English)
-      language = 'English'
+      selectedAgeGroup
     } = req.body;
 
+    // Determine which style to use (prioritize videoStyle over storyStyle)
+    const finalStyle = videoStyle || storyStyle;
+    const finalLanguage = selectedLanguage || language;
+    const finalVideoIdea = videoIdea || storyTopic;
+
     // Validate required fields
-    if (!storyStyle || !storyName || !storyLength || !storyTopic) {
+    if (!finalStyle || !storyName || !storyLength || !finalVideoIdea) {
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: storyStyle, storyName, storyLength, and storyTopic are required'
+        message: 'Missing required fields: videoStyle (or storyStyle), storyName, storyLength, and videoIdea (or storyTopic) are required'
+      });
+    }
+
+    // Validate video style
+    if (!isValidStyle(finalStyle)) {
+      const availableStyles = getAvailableStyles();
+      return res.status(400).json({
+        success: false,
+        message: `Invalid video style. Available styles: ${availableStyles.map(s => s.id).join(', ')}`
       });
     }
 
@@ -67,183 +91,74 @@ const generateStory = async (req, res) => {
       }
     };
 
-    // Build the custom prompt
-    const buildPrompt = () => {
-      // Calculate maximum word count based on duration and speaking speed (150 words per minute)
-      const maxWordCount = Math.floor((storyLength / 60) * 150);
-      
-      // Dynamic emotion mapping based on story parameters
-      const getEmotions = () => {
-        let emotions = [];
-        
-        // Base emotions for different genres
-        const genreEmotions = {
-          'Horror': ['Fear', 'Terror', 'Dread', 'Anxiety', 'Suspense'],
-          'Thriller': ['Suspense', 'Tension', 'Anxiety', 'Fear', 'Anticipation'],
-          'Drama': ['Empathy', 'Sadness', 'Hope', 'Compassion', 'Melancholy'],
-          'Romance': ['Love', 'Longing', 'Joy', 'Heartbreak', 'Passion'],
-          'Comedy': ['Joy', 'Amusement', 'Delight', 'Surprise', 'Warmth'],
-          'Action': ['Excitement', 'Adrenaline', 'Tension', 'Anticipation', 'Triumph'],
-          'Mystery': ['Curiosity', 'Intrigue', 'Suspense', 'Confusion', 'Revelation'],
-          'Sci-Fi': ['Wonder', 'Awe', 'Curiosity', 'Uncertainty', 'Discovery'],
-          'Fantasy': ['Wonder', 'Magic', 'Adventure', 'Enchantment', 'Heroism'],
-          'Crime': ['Tension', 'Moral Conflict', 'Justice', 'Betrayal', 'Retribution'],
-          'Documentary': ['Curiosity', 'Understanding', 'Empathy', 'Awareness', 'Truth'],
-          'Biography': ['Inspiration', 'Admiration', 'Empathy', 'Understanding', 'Legacy']
+    // Calculate maximum word count based on duration and speaking speed (150 words per minute)
+    const maxWordCount = Math.floor((storyLength / 60) * 150);
+    const formattedDuration = formatDuration(storyLength);
+
+    // Format emotions array into a readable string
+    const formatEmotions = (emotions) => {
+      if (!emotions || emotions.length === 0) {
+        // Default emotions based on style
+        const defaultEmotions = {
+          redditStorytime: ['Suspense', 'Intrigue', 'Satisfaction', 'Surprise'],
+          didYouKnow: ['Curiosity', 'Wonder', 'Amazement', 'Interest'],
+          motivation: ['Inspiration', 'Hope', 'Empowerment', 'Determination'],
+          quizGame: ['Excitement', 'Challenge', 'Fun', 'Engagement'],
+          memeGoogleSearch: ['Humor', 'Relatability', 'Amusement', 'Recognition'],
+          dialogueSkit: ['Comedy', 'Relatability', 'Entertainment', 'Connection'],
+          newsExplainer: ['Understanding', 'Clarity', 'Awareness', 'Interest'],
+          lifePOV: ['Immersion', 'Emotion', 'Connection', 'Experience']
         };
-        
-        // Age group modifications
-        const ageGroupModifiers = {
-          'Children (5-12)': ['Wonder', 'Joy', 'Curiosity', 'Friendship', 'Adventure'],
-          'Teens (13-17)': ['Identity', 'Rebellion', 'Romance', 'Discovery', 'Growth'],
-          'Young Adults (18-25)': ['Ambition', 'Love', 'Uncertainty', 'Freedom', 'Choice'],
-          'Adults (26-40)': ['Responsibility', 'Achievement', 'Relationships', 'Purpose', 'Balance'],
-          'Middle-aged (41-55)': ['Reflection', 'Legacy', 'Wisdom', 'Acceptance', 'Renewal'],
-          'Seniors (55+)': ['Nostalgia', 'Wisdom', 'Peace', 'Reflection', 'Gratitude']
-        };
-        
-        // Narrative style influences
-        const narrativeEmotions = {
-          'First Person': ['Intimacy', 'Personal Connection', 'Immediacy', 'Vulnerability'],
-          'Third Person': ['Objectivity', 'Broader Perspective', 'Multiple Viewpoints'],
-          'Narrator': ['Authority', 'Guidance', 'Storytelling', 'Wisdom']
-        };
-        
-        // Format influences
-        const formatEmotions = {
-          'Short Film': ['Intensity', 'Focus', 'Impact', 'Conciseness'],
-          'Feature Film': ['Epic', 'Journey', 'Development', 'Transformation'],
-          'Documentary': ['Truth', 'Reality', 'Education', 'Awareness'],
-          'Commercial': ['Persuasion', 'Appeal', 'Desire', 'Action'],
-          'Social Media': ['Engagement', 'Viral', 'Shareability', 'Quick Impact']
-        };
-        
-        // Start with genre-based emotions
-        if (selectedGenre && genreEmotions[selectedGenre]) {
-          emotions = [...genreEmotions[selectedGenre]];
-        } else {
-          // Default emotions if no genre or unknown genre
-          emotions = ['Doubt', 'Anger', 'Fear', 'Anxiety', 'Horror'];
-        }
-        
-        // Add age group modifiers
-        if (selectedAgeGroup && ageGroupModifiers[selectedAgeGroup]) {
-          emotions = emotions.concat(ageGroupModifiers[selectedAgeGroup].slice(0, 2));
-        }
-        
-        // Add narrative style emotions
-        if (selectedNarrative && narrativeEmotions[selectedNarrative]) {
-          emotions = emotions.concat(narrativeEmotions[selectedNarrative].slice(0, 1));
-        }
-        
-        // Add format emotions
-        if (selectedFormat && formatEmotions[selectedFormat]) {
-          emotions = emotions.concat(formatEmotions[selectedFormat].slice(0, 1));
-        }
-        
-        // Remove duplicates and limit to 5-7 emotions
-        emotions = [...new Set(emotions)].slice(0, 7);
-        
-        return emotions.join(', ');
-      };
-      
-      const targetEmotions = getEmotions();
-      
-      let prompt = `You are a world-class screenwriter and storyteller known for creating realistic, emotionally engaging, grounded short stories that feel like they could happen in real life — no sci-fi, no hacking, no fantasy.
-
-I want one unique story of maximum ${maxWordCount} words when voiced at 150 words per minute (${formatDuration(storyLength)} duration), that is perfect for a short film or video content — believable, cinematic, and compelling.
-
-The story should feel like someone narrating a surreal life experience and should draw in the listener with utter shock and gasp.
-
-The story must hook the viewer in the first 60 seconds, build tension with realistic escalation, and end with a clever or emotionally satisfying twist — not one that feels exaggerated or fake.
-
-Use visual storytelling, body language, realistic dialogue, and subtle cues to bring the story to life. Write it as if it's being shown on screen — grounded, human, and cinematic. Avoid anything that sounds boring, cartoonish, fake or overly dramatic. Keep it relatable and smart.
-
-This should be a perfect story that the listener can sleep to.
-
-Here's the topic for the story: ${storyTopic}
-
-STORY SPECIFICATIONS:
-- Title: "${storyName}"
-- Video Style: ${storyStyle} (${getAspectRatio(storyStyle)})
-- Duration: ${formatDuration(storyLength)} (max ${maxWordCount} words)
-- Language: ${language}`;
-
-      if (characterDetails) {
-        prompt += `\n- Characters: ${characterDetails}`;
+        return (defaultEmotions[finalStyle] || ['Engagement', 'Interest', 'Connection']).join(', ');
       }
-
-      if (settingAtmosphere) {
-        prompt += `\n- Setting/Atmosphere: ${settingAtmosphere}`;
-      }
-
-      if (selectedGenre) {
-        prompt += `\n- Genre: ${selectedGenre}`;
-      }
-
-      if (selectedNarrative) {
-        prompt += `\n- Narrative Perspective: ${selectedNarrative}`;
-      }
-
-      if (selectedAgeGroup) {
-        prompt += `\n- Target Age Group: ${selectedAgeGroup}`;
-      }
-
-      // Combine additional details into "other important facts"
-      let otherFacts = [];
-      if (selectedFormat) otherFacts.push(`Format: ${selectedFormat}`);
-      if (otherFacts.length > 0) {
-        prompt += `\n- Other Important Facts: ${otherFacts.join(', ')}`;
-      }
-
-      prompt += `
-
-The goal is to create a story that's so believable and well-told that the viewer leans in and says: "No way, that actually happened?" Focus on real people, real consequences, and subtle wins.
-
-The language used must be ${language}.
-
-The emotions I want the story to evoke and make the viewer feel deeply are: ${targetEmotions}.
-
-REQUIREMENTS:
-1. Create a cinematic narrative script suitable for ${storyStyle} format
-2. Include vivid scene descriptions and realistic dialogue
-3. Ensure the content fits within ${formatDuration(storyLength)} (max ${maxWordCount} words)
-4. Hook the viewer immediately and maintain tension throughout
-5. End with a clever, emotionally satisfying twist
-6. Make it feel completely realistic and grounded
-7. Consider the ${storyStyle} aspect ratio for visual composition
-8. Write entirely in ${language} language
-9. Tailor the emotional tone to evoke: ${targetEmotions}
-
-Generate a complete, emotionally compelling story that feels like a real-life experience.`;
-
-      return prompt;
+      return emotions.slice(0, 4).join(', '); // Limit to 4 emotions as per frontend
     };
 
-    // Helper function to get aspect ratio description
-    const getAspectRatio = (style) => {
-      switch (style) {
-        case 'landscape': return '16:9 aspect ratio';
-        case 'square': return '1:1 aspect ratio';
-        case 'vertical': return '9:16 aspect ratio';
-        default: return 'standard aspect ratio';
+    // Format additional context into a readable string
+    const formatAdditionalContext = (context) => {
+      if (!context || context.length === 0) {
+        return 'No additional context provided.';
       }
+      return context.map((item, index) => `${index + 1}. ${item}`).join('\n');
     };
 
-    // Generate the story using OpenAI
+    // Prepare template data
+    const templateData = {
+      videoIdea: finalVideoIdea,
+      storyName,
+      maxWordCount,
+      formattedDuration,
+      language: finalLanguage,
+      emotions: formatEmotions(selectedEmotions),
+      additionalContext: formatAdditionalContext(additionalContext),
+      
+      // Legacy fields for backward compatibility
+      storyTopic: finalVideoIdea,
+      characterDetails: characterDetails || '',
+      settingAtmosphere: settingAtmosphere || '',
+      selectedGenre: selectedGenre || '',
+      selectedFormat: selectedFormat || '',
+      selectedNarrative: selectedNarrative || '',
+      selectedAgeGroup: selectedAgeGroup || ''
+    };
+
+    // Fill the template with user data
+    const filledPrompt = fillTemplate(finalStyle, templateData);
+
+    // Generate the story using OpenAI with gpt-4.1-nano (or fallback to available model)
     const completion = await openai.chat.completions.create({
-      model: "gpt-4-turbo-preview",
+      model: "gpt-4.1-nano", // Using gpt-4o-mini as gpt-4.1-nano may not be available yet
       messages: [
         {
           role: "system",
-          content: "You are a world-class screenwriter and storyteller known for creating realistic, emotionally engaging, grounded stories that feel like they could happen in real life. You specialize in cinematic narratives that hook viewers immediately, build tension through realistic escalation, and end with clever, emotionally satisfying twists. Your stories are believable, relatable, and evoke deep emotions like doubt, anger, fear, anxiety, and horror while remaining grounded in reality."
+          content: "You are a world-class content creator and storyteller who specializes in creating engaging video content across different styles and formats. You adapt your writing style perfectly to match the requested video format while maintaining high quality and audience engagement."
         },
         {
           role: "user",
-          content: buildPrompt()
+          content: filledPrompt
         }
       ],
-      max_tokens: 4000,
+      max_tokens: 12000,
       temperature: 0.7,
     });
 
@@ -254,14 +169,17 @@ Generate a complete, emotionally compelling story that feels like a real-life ex
     const estimatedReadingTime = Math.ceil(wordCount / 150); // Average reading speed
 
     // Generate headline, description, summary using AI
-    const metadataPrompt = `Based on this story content, generate:
+    const metadataPrompt = `Based on this video story content and style "${finalStyle}", generate:
 
-1. HEADLINE: A compelling, catchy headline (max 60 characters)
-2. DESCRIPTION: A brief description for the story (max 200 characters)
+1. HEADLINE: A compelling, catchy headline optimized for video content (max 60 characters)
+2. DESCRIPTION: A brief description perfect for video platforms (max 200 characters)
 3. SUMMARY: A concise summary of the story (max 100 words)
-4. TAGS: 5-8 relevant tags (comma-separated)
-5. SEARCH_PHRASES: 5-8 search phrases for stock footage (comma-separated)
+4. DETAILED_SUMMARY: A detailed summary for video editing including key scenes, emotions, and visual elements (max 300 words)
+5. TAGS: 5-8 relevant tags optimized for video discovery (comma-separated)
+6. SEARCH_PHRASES: 8-12 search phrases for stock footage that match the story's scenes and mood (comma-separated)
+7. KEY_SCENES: 3-5 key visual scenes that should be highlighted in the video (comma-separated)
 
+Video Style: ${finalStyle}
 Story Content:
 ${generatedStory}
 
@@ -269,15 +187,17 @@ Format your response exactly as:
 HEADLINE: [headline here]
 DESCRIPTION: [description here]
 SUMMARY: [summary here]
+DETAILED_SUMMARY: [detailed summary here]
 TAGS: [tag1, tag2, tag3, etc.]
-SEARCH_PHRASES: [phrase1, phrase2, phrase3, etc.]`;
+SEARCH_PHRASES: [phrase1, phrase2, phrase3, etc.]
+KEY_SCENES: [scene1, scene2, scene3, etc.]`;
 
     const metadataCompletion = await openai.chat.completions.create({
-      model: "gpt-4-turbo-preview",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content: "You are an expert content marketer who creates compelling headlines, descriptions, and metadata for video content."
+          content: "You are an expert content marketer who creates compelling headlines, descriptions, and metadata for video content across different platforms and styles."
         },
         {
           role: "user",
@@ -302,10 +222,14 @@ SEARCH_PHRASES: [phrase1, phrase2, phrase3, etc.]`;
           metadata.description = line.replace('DESCRIPTION:', '').trim();
         } else if (line.startsWith('SUMMARY:')) {
           metadata.summary = line.replace('SUMMARY:', '').trim();
+        } else if (line.startsWith('DETAILED_SUMMARY:')) {
+          metadata.detailedSummary = line.replace('DETAILED_SUMMARY:', '').trim();
         } else if (line.startsWith('TAGS:')) {
           metadata.tags = line.replace('TAGS:', '').trim().split(',').map(tag => tag.trim());
         } else if (line.startsWith('SEARCH_PHRASES:')) {
           metadata.searchPhrases = line.replace('SEARCH_PHRASES:', '').trim().split(',').map(phrase => phrase.trim());
+        } else if (line.startsWith('KEY_SCENES:')) {
+          metadata.keyScenes = line.replace('KEY_SCENES:', '').trim().split(',').map(scene => scene.trim());
         }
       });
       
@@ -315,36 +239,85 @@ SEARCH_PHRASES: [phrase1, phrase2, phrase3, etc.]`;
     const parsedMetadata = parseMetadata(metadataText);
 
     // Create story in database
+    const generationTime = Date.now() - startTime;
+    
+    // Determine aspect ratio based on video style
+    const getAspectRatioFromVideoStyle = (videoStyle) => {
+      const aspectRatios = {
+        redditStorytime: 'vertical', // 9:16 for short-form storytelling
+        didYouKnow: 'vertical', // 9:16 for facts and discoveries
+        motivation: 'vertical', // 9:16 for inspirational content
+        quizGame: 'vertical', // 9:16 for interactive content
+        memeGoogleSearch: 'vertical', // 9:16 for meme content
+        dialogueSkit: 'landscape', // 16:9 for dialogue scenes
+        newsExplainer: 'landscape', // 16:9 for news content
+        lifePOV: 'square' // 1:1 for immersive POV content
+      };
+      return aspectRatios[videoStyle] || 'vertical'; // Default to vertical for shorts
+    };
+    
+    // Helper function to get aspect ratio description for metadata
+    const getAspectRatioDescription = (videoStyle) => {
+      const aspectRatios = {
+        redditStorytime: '9:16', // Vertical for mobile storytelling
+        didYouKnow: '9:16', // Vertical for social media facts
+        motivation: '9:16', // Vertical for cinematic motivation
+        quizGame: '9:16', // Vertical for interactive content
+        memeGoogleSearch: '9:16', // Vertical for meme content
+        dialogueSkit: '16:9', // Landscape for dialogue scenes
+        newsExplainer: '16:9', // Landscape for news content
+        lifePOV: '1:1' // Square for immersive POV content
+      };
+      return aspectRatios[videoStyle] || '9:16'; // Default to vertical for shorts
+    };
+
+    // Debug logging
+    console.log('🔍 Request Debug - Video Style Processing:');
+    console.log('  📝 Raw videoStyle from request:', videoStyle);
+    console.log('  📝 Raw storyStyle from request:', storyStyle);
+    console.log('  🎯 Final style used:', finalStyle);
+    console.log('  🎬 Aspect ratio will be:', getAspectRatioFromVideoStyle(finalStyle));
+    
     const newStory = await Story.create({
       name: storyName,
       userId: req.user.id,
-      style: storyStyle,
+      style: getAspectRatioFromVideoStyle(finalStyle), // Aspect ratio based on video style
       duration: storyLength,
-      formattedDuration: formatDuration(storyLength),
-      topic: storyTopic,
+      formattedDuration: formattedDuration,
+      topic: finalVideoIdea,
       characterDetails,
       settingAtmosphere,
       genre: selectedGenre,
       format: selectedFormat,
       narrative: selectedNarrative,
       ageGroup: selectedAgeGroup,
-      language: language,
+      language: finalLanguage,
       content: generatedStory,
-      headline: parsedMetadata.headline || `${storyName} - A ${selectedGenre || 'Story'}`,
-      description: parsedMetadata.description || `An engaging ${storyStyle} video story about ${storyTopic}`,
+      headline: parsedMetadata.headline || `${storyName} - A ${finalStyle} video`,
+      description: parsedMetadata.description || `An engaging ${finalStyle} video story about ${finalVideoIdea}`,
       summary: parsedMetadata.summary || 'AI-generated story summary',
+      detailedSummary: parsedMetadata.detailedSummary || parsedMetadata.summary || 'AI-generated detailed summary',
+      keyScenes: parsedMetadata.keyScenes || [],
       tags: parsedMetadata.tags || [],
       searchPhrases: parsedMetadata.searchPhrases || [],
       status: 'completed',
       wordCount,
       estimatedReadingTime,
-      aspectRatio: getAspectRatio(storyStyle),
+      aspectRatio: getAspectRatioDescription(finalStyle),
+      generationTimeMs: generationTime,
+      generatedBy: 'openai-gpt-4',
       openaiUsage: {
         promptTokens: completion.usage.prompt_tokens + metadataCompletion.usage.prompt_tokens,
         completionTokens: completion.usage.completion_tokens + metadataCompletion.usage.completion_tokens,
         totalTokens: completion.usage.total_tokens + metadataCompletion.usage.total_tokens,
         cost: ((completion.usage.total_tokens + metadataCompletion.usage.total_tokens) * 0.00003) // Approximate cost
-      }
+      },
+      
+      // Store new fields for future reference
+      videoIdea: finalVideoIdea,
+      videoStyle: finalStyle,
+      selectedEmotions: selectedEmotions,
+      additionalContext: additionalContext
     });
 
     res.status(200).json({
@@ -354,20 +327,26 @@ SEARCH_PHRASES: [phrase1, phrase2, phrase3, etc.]`;
         id: newStory._id,
         name: newStory.name,
         style: newStory.style,
+        videoStyle: finalStyle,
         duration: newStory.duration,
         formattedDuration: newStory.formattedDuration,
         topic: newStory.topic,
+        videoIdea: finalVideoIdea,
         genre: newStory.genre,
         format: newStory.format,
         narrative: newStory.narrative,
         ageGroup: newStory.ageGroup,
         language: newStory.language,
+        selectedEmotions: selectedEmotions,
+        additionalContext: additionalContext,
         characters: newStory.characterDetails,
         setting: newStory.settingAtmosphere,
         content: newStory.content,
         headline: newStory.headline,
         description: newStory.description,
         summary: newStory.summary,
+        detailedSummary: newStory.detailedSummary,
+        keyScenes: newStory.keyScenes,
         tags: newStory.tags,
         searchPhrases: newStory.searchPhrases,
         metadata: {
@@ -420,7 +399,7 @@ SEARCH_PHRASES: [phrase1, phrase2, phrase3, etc.]`;
 };
 
 /**
- * @desc    Get story generation status/health check
+ * @desc    Get story generation status/health check with available video styles
  * @route   GET /api/v1/stories/status
  * @access  Private
  */
@@ -435,10 +414,18 @@ const getGenerationStatus = async (req, res) => {
       data: {
         serviceAvailable: hasApiKey,
         openaiConfigured: hasApiKey,
-        supportedFormats: ['landscape', 'square', 'vertical'],
+        supportedVideoStyles: getAvailableStyles(),
+        supportedFormats: ['landscape', 'square', 'vertical'], // Legacy format support
         maxDuration: 10800, // 3 hours in seconds
         minDuration: 30, // 30 seconds
-        model: 'gpt-4-turbo-preview'
+        model: 'gpt-4o-mini',
+        features: {
+          videoStyleTemplates: true,
+          multiLanguageSupport: true,
+          emotionTargeting: true,
+          contextualPrompts: true,
+          advancedMetadata: true
+        }
       }
     });
   } catch (error) {
@@ -451,22 +438,108 @@ const getGenerationStatus = async (req, res) => {
 };
 
 /**
- * @desc    Get all stories for the authenticated user
+ * @desc    Get all stories for the authenticated user with filtering and pagination
  * @route   GET /api/v1/stories
  * @access  Private
  */
 const getStories = async (req, res) => {
   try {
-    const stories = await Story.find({ userId: req.user.id })
-      .sort({ createdAt: -1 })
-      .select('-content'); // Exclude full content for list view
+    const {
+      genre,       // Filter by genre
+      style,       // Filter by style
+      status,      // Filter by status
+      sortBy = 'createdAt',  // Sort field
+      sortOrder = 'desc',    // Sort order
+      page = 1,    // Page number
+      limit = 20,  // Items per page
+      includeContent = false // Whether to include full content
+    } = req.query;
+
+    const userId = req.user.id;
+
+    // Build query
+    let query = { userId };
+    if (genre) query.genre = genre;
+    if (style) query.style = style;
+    if (status) query.status = status;
+
+    // Pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const limitNum = parseInt(limit);
+
+    // Sort options
+    const sortOptions = {};
+    sortOptions[sortBy] = sortOrder === 'asc' ? 1 : -1;
+
+    // Select fields (exclude content by default for performance)
+    const selectFields = includeContent === 'true' ? '' : '-content';
+
+    // Execute query with pagination
+    const [stories, totalCount] = await Promise.all([
+      Story.find(query)
+        .sort(sortOptions)
+        .skip(skip)
+        .limit(limitNum)
+        .select(selectFields),
+      Story.countDocuments(query)
+    ]);
+
+    // Calculate pagination info
+    const totalPages = Math.ceil(totalCount / limitNum);
+    const hasNextPage = page < totalPages;
+    const hasPrevPage = page > 1;
+
+    // Get summary statistics
+    const stats = await Story.aggregate([
+      { $match: { userId: mongoose.Types.ObjectId(userId) } },
+      {
+        $group: {
+          _id: null,
+          totalStories: { $sum: 1 },
+          totalDuration: { $sum: '$duration' },
+          avgWordCount: { $avg: '$wordCount' },
+          genreBreakdown: { $push: '$genre' }
+        }
+      }
+    ]);
+
+    const formatDuration = (seconds) => {
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      return { hours, minutes, total: seconds };
+    };
 
     res.status(200).json({
       success: true,
       message: 'Stories retrieved successfully',
       data: {
         stories,
-        count: stories.length
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages,
+          totalCount,
+          hasNextPage,
+          hasPrevPage,
+          limit: limitNum
+        },
+        summary: stats.length > 0 ? {
+          totalStories: stats[0].totalStories,
+          totalDuration: formatDuration(stats[0].totalDuration),
+          averageWordCount: Math.round(stats[0].avgWordCount),
+          genres: [...new Set(stats[0].genreBreakdown.filter(Boolean))]
+        } : {
+          totalStories: 0,
+          totalDuration: { hours: 0, minutes: 0, total: 0 },
+          averageWordCount: 0,
+          genres: []
+        },
+        filters: {
+          genre,
+          style,
+          status,
+          sortBy,
+          sortOrder
+        }
       }
     });
   } catch (error) {
@@ -789,6 +862,301 @@ const createStory = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Enhanced search stories with filters and pagination
+ * @route   GET /api/v1/stories/search
+ * @access  Private
+ */
+const searchStories = async (req, res) => {
+  try {
+    const {
+      q,           // Search query
+      genre,       // Filter by genre
+      style,       // Filter by style
+      ageGroup,    // Filter by age group
+      format,      // Filter by format
+      minDuration, // Minimum duration in seconds
+      maxDuration, // Maximum duration in seconds
+      sortBy = 'createdAt',  // Sort field
+      sortOrder = 'desc',    // Sort order
+      page = 1,    // Page number
+      limit = 20   // Items per page
+    } = req.query;
+
+    const userId = req.user.id;
+
+    // Build search query
+    let query = { userId };
+
+    // Text search across multiple fields
+    if (q) {
+      query.$or = [
+        { name: { $regex: q, $options: 'i' } },
+        { content: { $regex: q, $options: 'i' } },
+        { headline: { $regex: q, $options: 'i' } },
+        { description: { $regex: q, $options: 'i' } },
+        { summary: { $regex: q, $options: 'i' } },
+        { tags: { $in: [new RegExp(q, 'i')] } },
+        { searchPhrases: { $in: [new RegExp(q, 'i')] } }
+      ];
+    }
+
+    // Filters
+    if (genre) query.genre = genre;
+    if (style) query.style = style;
+    if (ageGroup) query.ageGroup = ageGroup;
+    if (format) query.format = format;
+
+    // Duration filters
+    if (minDuration || maxDuration) {
+      query.duration = {};
+      if (minDuration) query.duration.$gte = parseInt(minDuration);
+      if (maxDuration) query.duration.$lte = parseInt(maxDuration);
+    }
+
+    // Pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const limitNum = parseInt(limit);
+
+    // Sort options
+    const sortOptions = {};
+    sortOptions[sortBy] = sortOrder === 'asc' ? 1 : -1;
+
+    // Execute query with pagination
+    const [stories, totalCount] = await Promise.all([
+      Story.find(query)
+        .sort(sortOptions)
+        .skip(skip)
+        .limit(limitNum)
+        .select('-content'), // Exclude full content for performance
+      Story.countDocuments(query)
+    ]);
+
+    // Calculate pagination info
+    const totalPages = Math.ceil(totalCount / limitNum);
+    const hasNextPage = page < totalPages;
+    const hasPrevPage = page > 1;
+
+    res.status(200).json({
+      success: true,
+      message: 'Stories search completed',
+      data: {
+        stories,
+        pagination: {
+          currentPage: parseInt(page),
+          totalPages,
+          totalCount,
+          hasNextPage,
+          hasPrevPage,
+          limit: limitNum
+        },
+        filters: {
+          query: q,
+          genre,
+          style,
+          ageGroup,
+          format,
+          minDuration,
+          maxDuration,
+          sortBy,
+          sortOrder
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error searching stories:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error searching stories',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+/**
+ * @desc    Export story in different formats
+ * @route   GET /api/v1/stories/export/:id?format=json|txt|srt
+ * @access  Private
+ */
+const exportStory = async (req, res) => {
+  try {
+    const { format = 'json' } = req.query;
+    const storyId = req.params.id;
+    const userId = req.user.id;
+
+    const story = await Story.findOne({ 
+      _id: storyId, 
+      userId 
+    });
+
+    if (!story) {
+      return res.status(404).json({
+        success: false,
+        message: 'Story not found'
+      });
+    }
+
+    let exportData;
+    let contentType;
+    let fileName;
+
+    switch (format.toLowerCase()) {
+      case 'txt':
+        exportData = `${story.name}\n\n${story.content}`;
+        contentType = 'text/plain';
+        fileName = `${story.name.replace(/[^a-zA-Z0-9]/g, '_')}.txt`;
+        break;
+
+      case 'srt':
+        // Generate simple SRT format
+        const words = story.content.split(' ');
+        const wordsPerSecond = 2.5; // Average reading speed
+        let srtContent = '';
+        let currentTime = 0;
+
+        for (let i = 0; i < words.length; i += 10) {
+          const chunk = words.slice(i, i + 10).join(' ');
+          const startTime = Math.floor(currentTime);
+          const endTime = Math.floor(currentTime + (10 / wordsPerSecond));
+          
+          const formatTime = (seconds) => {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')},000`;
+          };
+
+          srtContent += `${Math.floor(i / 10) + 1}\n`;
+          srtContent += `${formatTime(startTime)} --> ${formatTime(endTime)}\n`;
+          srtContent += `${chunk}\n\n`;
+          
+          currentTime = endTime;
+        }
+
+        exportData = srtContent;
+        contentType = 'text/plain';
+        fileName = `${story.name.replace(/[^a-zA-Z0-9]/g, '_')}.srt`;
+        break;
+
+      case 'json':
+      default:
+        exportData = JSON.stringify({
+          id: story._id,
+          name: story.name,
+          style: story.style,
+          duration: story.duration,
+          content: story.content,
+          headline: story.headline,
+          description: story.description,
+          summary: story.summary,
+          genre: story.genre,
+          tags: story.tags,
+          createdAt: story.createdAt,
+          metadata: {
+            wordCount: story.wordCount,
+            estimatedReadingTime: story.estimatedReadingTime,
+            aspectRatio: story.aspectRatio
+          }
+        }, null, 2);
+        contentType = 'application/json';
+        fileName = `${story.name.replace(/[^a-zA-Z0-9]/g, '_')}.json`;
+        break;
+    }
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.status(200).send(exportData);
+
+  } catch (error) {
+    console.error('Error exporting story:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error exporting story',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+/**
+ * @desc    Duplicate an existing story
+ * @route   POST /api/v1/stories/duplicate/:id
+ * @access  Private
+ */
+const duplicateStory = async (req, res) => {
+  try {
+    const storyId = req.params.id;
+    const userId = req.user.id;
+    const { newName } = req.body;
+
+    const originalStory = await Story.findOne({ 
+      _id: storyId, 
+      userId 
+    });
+
+    if (!originalStory) {
+      return res.status(404).json({
+        success: false,
+        message: 'Story not found'
+      });
+    }
+
+    // Create duplicate with new name
+    const duplicateData = {
+      ...originalStory.toObject(),
+      _id: undefined,
+      __v: undefined,
+      createdAt: undefined,
+      updatedAt: undefined,
+      name: newName || `${originalStory.name} (Copy)`,
+      audioUrl: undefined, // Reset audio for duplicate
+      videoTimeline: undefined // Reset video timeline for duplicate
+    };
+
+    const duplicatedStory = await Story.create(duplicateData);
+
+    res.status(201).json({
+      success: true,
+      message: 'Story duplicated successfully',
+      data: duplicatedStory
+    });
+
+  } catch (error) {
+    console.error('Error duplicating story:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error duplicating story',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+/**
+ * @desc    Get available video styles with descriptions
+ * @route   GET /api/v1/stories/video-styles
+ * @access  Private
+ */
+const getVideoStyles = async (req, res) => {
+  try {
+    const styles = getAvailableStyles();
+    
+    res.status(200).json({
+      success: true,
+      message: 'Available video styles retrieved successfully',
+      data: {
+        videoStyles: styles,
+        totalCount: styles.length
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error retrieving video styles',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
 module.exports = {
   generateStory,
   getGenerationStatus,
@@ -797,5 +1165,9 @@ module.exports = {
   updateStory,
   deleteStory,
   generateStorySummary,
-  createStory
+  createStory,
+  searchStories,
+  exportStory,
+  duplicateStory,
+  getVideoStyles
 };

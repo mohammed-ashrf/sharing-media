@@ -26,6 +26,10 @@ const storyRoutes = require('./routes/stories');
 const voiceRoutes = require('./routes/voice');
 const videoRoutes = require('./routes/video');
 const captionRoutes = require('./routes/captions');
+const analyticsRoutes = require('./routes/analytics');
+const templateRoutes = require('./routes/templates');
+const mediaRoutes = require('./routes/media');
+const elevenLabsVoicesRoutes = require('./routes/voices'); // New ElevenLabs voices route
 
 // Create Express app
 const app = express();
@@ -42,6 +46,20 @@ app.use(securityMiddleware);
 // Development logging
 if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
+  
+  // Enhanced CORS debugging middleware
+  app.use((req, res, next) => {
+    if (req.headers.origin || req.headers.referer) {
+      console.log(`\n🔍 Request Debug [${new Date().toISOString()}]:`);
+      console.log(`   📝 Method: ${req.method}`);
+      console.log(`   🎯 URL: ${req.url}`);
+      console.log(`   🌍 Origin: ${req.headers.origin || 'Not provided'}`);
+      console.log(`   🔗 Referer: ${req.headers.referer || 'Not provided'}`);
+      console.log(`   📱 User-Agent: ${req.headers['user-agent']?.substring(0, 50) || 'Not provided'}...`);
+      console.log(`   🔑 Authorization: ${req.headers.authorization ? 'Present' : 'Not provided'}`);
+    }
+    next();
+  });
 }
 
 // Body parser middleware
@@ -62,15 +80,91 @@ app.use('/api/v1/auth/register', authLimiter);
 app.use('/api/v1/auth/forgotpassword', passwordResetLimiter);
 app.use('/api/v1/auth/resetpassword', passwordResetLimiter);
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({
+// Performance monitoring middleware
+app.use((req, res, next) => {
+  req.startTime = Date.now();
+  
+  const originalSend = res.send;
+  res.send = function(data) {
+    const duration = Date.now() - req.startTime;
+    
+    // Log slow requests (> 1 second)
+    if (duration > 1000) {
+      console.log(`⚠️ Slow Request [${new Date().toISOString()}]:`);
+      console.log(`   📍 ${req.method} ${req.url}`);
+      console.log(`   ⏱️ Duration: ${duration}ms`);
+      console.log(`   📊 Status: ${res.statusCode}`);
+    }
+    
+    // Add performance headers
+    res.setHeader('X-Response-Time', `${duration}ms`);
+    res.setHeader('X-Timestamp', new Date().toISOString());
+    
+    return originalSend.call(this, data);
+  };
+  
+  next();
+});
+
+// Enhanced health check endpoint
+app.get('/health', async (req, res) => {
+  const healthcheck = {
     success: true,
     message: 'StoryMaker API is running',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV,
     version: process.env.APP_VERSION || '1.0.0',
-    database: database.getConnectionState()
+    uptime: process.uptime(),
+    database: database.getConnectionState(),
+    services: {
+      openai: !!process.env.OPENAI_API_KEY,
+      elevenlabs: !!process.env.ELEVENLABS_API_KEY,
+      mongodb: database.getConnectionState() === 'connected'
+    },
+    memory: {
+      used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+      total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
+      external: Math.round(process.memoryUsage().external / 1024 / 1024)
+    },
+    system: {
+      platform: process.platform,
+      arch: process.arch,
+      nodeVersion: process.version,
+      pid: process.pid
+    }
+  };
+
+  // Check if critical services are down
+  if (!healthcheck.services.mongodb) {
+    healthcheck.success = false;
+    healthcheck.message = 'Database connection issue';
+    return res.status(503).json(healthcheck);
+  }
+
+  res.status(200).json(healthcheck);
+});
+
+// CORS test endpoint
+app.get('/cors-test', (req, res) => {
+  const frontendUrls = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : [];
+  res.status(200).json({
+    success: true,
+    message: 'CORS test endpoint',
+    timestamp: new Date().toISOString(),
+    requestOrigin: req.headers.origin || 'No origin header',
+    allowedOrigins: [
+      ...frontendUrls.map(url => url.trim()),
+      process.env.FRONTEND_URL_PRODUCTION,
+      'http://localhost:4200',
+      'http://localhost:3000',
+      'tauri://localhost',
+      'https://tauri.localhost'
+    ].filter(Boolean),
+    corsHeaders: {
+      'Access-Control-Allow-Origin': res.getHeader('Access-Control-Allow-Origin'),
+      'Access-Control-Allow-Methods': res.getHeader('Access-Control-Allow-Methods'),
+      'Access-Control-Allow-Headers': res.getHeader('Access-Control-Allow-Headers')
+    }
   });
 });
 
@@ -81,6 +175,10 @@ app.use('/api/v1/stories', storyRoutes);
 app.use('/api/v1/voice', voiceRoutes);
 app.use('/api/v1/video', videoRoutes);
 app.use('/api/v1/captions', captionRoutes);
+app.use('/api/v1/analytics', analyticsRoutes);
+app.use('/api/v1/templates', templateRoutes);
+app.use('/api/v1/media', mediaRoutes);
+app.use('/api/v1/voices', elevenLabsVoicesRoutes); // New ElevenLabs voices endpoint
 
 // Welcome route
 app.get('/', (req, res) => {
@@ -124,7 +222,16 @@ app.get('/api/v1/docs', (req, res) => {
         getUserStats: 'GET /api/v1/users/stats'
       },
       stories: {
+        getAllStories: 'GET /api/v1/stories',
+        getStory: 'GET /api/v1/stories/:id',
+        createStory: 'POST /api/v1/stories',
+        updateStory: 'PUT /api/v1/stories/:id',
+        deleteStory: 'DELETE /api/v1/stories/:id',
         generateStory: 'POST /api/v1/stories/generate',
+        searchStories: 'GET /api/v1/stories/search',
+        exportStory: 'GET /api/v1/stories/export/:id',
+        duplicateStory: 'POST /api/v1/stories/duplicate/:id',
+        generateSummary: 'POST /api/v1/stories/:id/summary',
         getStatus: 'GET /api/v1/stories/status'
       },
       voice: {
@@ -150,6 +257,21 @@ app.get('/api/v1/docs', (req, res) => {
         getStoryCaptions: 'GET /api/v1/captions/story/:storyId',
         deleteStoryCaptions: 'DELETE /api/v1/captions/story/:storyId',
         getStatus: 'GET /api/v1/captions/status'
+      },
+      analytics: {
+        getDashboardStats: 'GET /api/v1/analytics/dashboard',
+        getStoryStats: 'GET /api/v1/analytics/stories',
+        getUserActivity: 'GET /api/v1/analytics/activity',
+        getUsageMetrics: 'GET /api/v1/analytics/usage',
+        getPopularContent: 'GET /api/v1/analytics/popular'
+      },
+      templates: {
+        getTemplates: 'GET /api/v1/templates',
+        getTemplate: 'GET /api/v1/templates/:id',
+        createTemplate: 'POST /api/v1/templates',
+        updateTemplate: 'PUT /api/v1/templates/:id',
+        deleteTemplate: 'DELETE /api/v1/templates/:id',
+        useTemplate: 'POST /api/v1/templates/:id/use'
       }
     }
   });
@@ -206,7 +328,7 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Start server
 const PORT = process.env.PORT || 5000;
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`
 🚀 StoryMaker API Server is running!
 📍 Environment: ${process.env.NODE_ENV}

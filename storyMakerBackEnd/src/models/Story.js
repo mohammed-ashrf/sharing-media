@@ -21,7 +21,7 @@ const storySchema = new mongoose.Schema({
     type: Number, // Duration in seconds
     required: true,
     min: 30,
-    max: 10800 // 3 hours
+    max: 180 // 3 minutes
   },
   formattedDuration: String,
   topic: {
@@ -56,6 +56,8 @@ const storySchema = new mongoose.Schema({
     required: true
   },
   summary: String,
+  detailedSummary: String, // Detailed summary for video editing
+  keyScenes: [String], // Key visual scenes for video production
   tags: [String],
   searchPhrases: [String],
   
@@ -189,16 +191,122 @@ const storySchema = new mongoose.Schema({
   wordCount: Number,
   estimatedReadingTime: Number,
   aspectRatio: String,
+  
+  // Performance tracking
+  generationTimeMs: {
+    type: Number, // Time taken to generate the story in milliseconds
+    default: null
+  },
   generatedBy: {
     type: String,
+    enum: ['openai-gpt-4', 'openai-gpt-3.5', 'template', 'manual'],
     default: 'openai-gpt-4'
+  },
+  
+  // User interaction tracking
+  viewCount: {
+    type: Number,
+    default: 0
+  },
+  lastViewedAt: Date,
+  
+  // Collaboration features
+  isShared: {
+    type: Boolean,
+    default: false
+  },
+  sharedWith: [{
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    permission: {
+      type: String,
+      enum: ['view', 'edit'],
+      default: 'view'
+    },
+    sharedAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+  
+  // Version control
+  version: {
+    type: Number,
+    default: 1
+  },
+  previousVersions: [{
+    version: Number,
+    content: String,
+    modifiedAt: Date,
+    modifiedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    }
+  }],
+  
+  // New video-centric fields
+  videoIdea: {
+    type: String,
+    maxlength: 500
+  },
+  videoStyle: {
+    type: String,
+    enum: ['redditStorytime', 'didYouKnow', 'motivation', 'quizGame', 'memeGoogleSearch', 'dialogueSkit', 'newsExplainer', 'lifePOV']
+  },
+  selectedEmotions: [String],
+  additionalContext: [String],
+  selectedLanguage: {
+    type: String,
+    default: 'English'
   }
 }, {
   timestamps: true
 });
 
-// Index for better query performance
+// Comprehensive indexes for better query performance
 storySchema.index({ userId: 1, createdAt: -1 });
+storySchema.index({ userId: 1, status: 1 });
+storySchema.index({ userId: 1, genre: 1 });
+storySchema.index({ userId: 1, style: 1 });
+storySchema.index({ userId: 1, videoStyle: 1 }); // New index for video styles
+storySchema.index({ genre: 1, style: 1 });
+storySchema.index({ videoStyle: 1 }); // New index for video style queries
 storySchema.index({ status: 1 });
+storySchema.index({ createdAt: -1 });
+storySchema.index({ viewCount: -1 });
+storySchema.index({ tags: 1 });
+storySchema.index({ isShared: 1 });
+storySchema.index({ selectedEmotions: 1 }); // New index for emotions
+storySchema.index({ selectedLanguage: 1 }); // New index for language
+
+// Text index for search functionality
+storySchema.index({
+  name: 'text',
+  headline: 'text',
+  description: 'text',
+  content: 'text',
+  summary: 'text'
+});
+
+// Compound indexes for analytics
+storySchema.index({ userId: 1, createdAt: -1, genre: 1 });
+storySchema.index({ userId: 1, duration: 1 });
+storySchema.index({ createdAt: -1, generatedBy: 1 });
+
+// Virtual fields
+storySchema.virtual('isRecentlyViewed').get(function() {
+  if (!this.lastViewedAt) return false;
+  const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  return this.lastViewedAt > dayAgo;
+});
+
+storySchema.virtual('collaboratorCount').get(function() {
+  return this.sharedWith ? this.sharedWith.length : 0;
+});
+
+// Ensure virtual fields are serialized
+storySchema.set('toJSON', { virtuals: true });
 
 module.exports = mongoose.model('Story', storySchema);

@@ -3,10 +3,12 @@ const {
   getVoices,
   getVoiceById,
   generateSpeech,
+  generateSpeechBlob,
   cloneVoice,
   getSubscription,
   generateStoryVoice,
   uploadUserAudio,
+  serveAudioFile,
   upload
 } = require('../controllers/voiceController');
 
@@ -29,6 +31,9 @@ router.route('/voices/:id')
 router.route('/generate')
   .post(generateSpeech);
 
+router.route('/generate-blob')
+  .post(generateSpeechBlob);
+
 router.route('/story/:storyId')
   .post(generateStoryVoice);
 
@@ -43,5 +48,9 @@ router.route('/upload')
 // Subscription information
 router.route('/subscription')
   .get(getSubscription);
+
+// Serve generated audio files
+router.route('/audio/:filename')
+  .get(serveAudioFile);
 
 module.exports = router;

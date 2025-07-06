@@ -61,18 +61,30 @@ const corsOptions = {
       // Add your production domains here
     ].filter(Boolean);
 
+    // Log incoming CORS request details
+    const timestamp = new Date().toISOString();
+    console.log(`\n🌐 CORS Request [${timestamp}]:`);
+    console.log(`   📍 Origin: ${origin || 'No Origin (null)'}`);
+    console.log(`   ✅ Allowed Origins: [${allowedOrigins.join(', ')}]`);
+    
     // Allow requests with no origin (mobile apps, desktop apps, Tauri apps, etc.)
-    if (!origin) return callback(null, true);
+    if (!origin) {
+      console.log(`   ✅ Decision: ALLOWED (No origin - mobile/desktop app)`);
+      return callback(null, true);
+    }
     
     // Check if the origin starts with tauri:// for Tauri desktop apps
     if (origin.startsWith('tauri://')) {
+      console.log(`   ✅ Decision: ALLOWED (Tauri desktop app)`);
       return callback(null, true);
     }
     
     if (allowedOrigins.indexOf(origin) !== -1) {
+      console.log(`   ✅ Decision: ALLOWED (Origin in whitelist)`);
       callback(null, true);
     } else {
-      console.log(`CORS blocked origin: ${origin}`);
+      console.log(`   ❌ Decision: BLOCKED (Origin not in whitelist)`);
+      console.log(`   💡 Tip: Add "${origin}" to FRONTEND_URL environment variable if this is expected`);
       callback(new Error('Not allowed by CORS'));
     }
   },

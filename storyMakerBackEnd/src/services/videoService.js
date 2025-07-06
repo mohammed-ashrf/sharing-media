@@ -23,15 +23,15 @@ class VideoService {
   }
 
   /**
-   * Search for stock videos and photos from multiple platforms
+   * Search for stock videos and photos from multiple platforms - Returns URLs only
    * @param {Array} searchPhrases - Array of search phrases
    * @param {number} duration - Total duration needed in seconds
    * @param {string} orientation - 'landscape', 'portrait', or 'square'
-   * @returns {Promise<Object>} Timeline with media assets
+   * @returns {Promise<Object>} Timeline with media URLs
    */
-  async createVideoTimeline(searchPhrases, duration, orientation = 'landscape') {
+  async createVideoTimelineUrls(searchPhrases, duration, orientation = 'landscape') {
     try {
-      console.log(`Creating video timeline for ${duration}s with orientation: ${orientation}`);
+      console.log(`Creating video timeline URLs for ${duration}s with orientation: ${orientation}`);
       console.log('Search phrases:', searchPhrases);
 
       const timeline = {
@@ -78,8 +78,8 @@ class VideoService {
           console.log('  - Pixabay API Key:', this.pixabayApiKey ? '✅ Present' : '❌ Missing');
           
           // Return mock data for development
-          console.log('🎬 Generating mock video timeline for development...');
-          return this.generateMockTimeline(searchPhrases, duration, orientation);
+          console.log('🎬 Generating mock video timeline URLs for development...');
+          return this.generateMockTimelineUrls(searchPhrases, duration, orientation);
         }
         
         throw new Error('No media found from any source. Please check API keys and search phrases.');
@@ -88,7 +88,7 @@ class VideoService {
       // Shuffle and select best media mix
       const selectedMedia = this.selectBestMediaMix(allMedia, targetClipCount);
       
-      // Download and process media
+      // Create timeline with URLs only (no downloading)
       let currentDuration = 0;
       for (const media of selectedMedia) {
         if (currentDuration >= duration) break;
@@ -96,56 +96,50 @@ class VideoService {
         const remainingDuration = duration - currentDuration;
         const clipDuration = Math.min(media.duration || avgClipDuration, remainingDuration);
 
-        try {
-          const downloadedMedia = await this.downloadMedia(media);
-          
-          const clip = {
-            id: crypto.randomUUID(),
-            type: media.type,
-            source: media.source,
-            url: downloadedMedia.localPath,
-            originalUrl: media.url,
-            duration: clipDuration,
-            startTime: currentDuration,
-            endTime: currentDuration + clipDuration,
-            metadata: {
-              title: media.title || '',
-              tags: media.tags || [],
-              photographer: media.photographer || '',
-              source: media.source,
-              originalId: media.id
-            }
-          };
-
-          if (media.type === 'video') {
-            timeline.clips.push(clip);
-          } else {
-            timeline.photos.push(clip);
-          }
-
-          currentDuration += clipDuration;
-          
-        } catch (downloadError) {
-          console.error(`Failed to download media ${media.id}:`, downloadError.message);
-          // Continue with next media item
-        }
-      }
-
-      // Fill remaining time with photos if needed
-      if (currentDuration < duration && timeline.photos.length > 0) {
-        const remainingTime = duration - currentDuration;
-        const photosToExtend = timeline.photos.slice(0, Math.ceil(remainingTime / 3));
-        
-        for (const photo of photosToExtend) {
-          if (currentDuration >= duration) break;
-          
-          const photoExtension = Math.min(3, duration - currentDuration);
+        if (media.type === 'video') {
           timeline.clips.push({
-            ...photo,
-            id: crypto.randomUUID(),
-            duration: photoExtension,
+            id: media.id,
+            source: media.source,
+            url: media.url,
+            downloadUrl: media.url, // Direct link for frontend to use
             startTime: currentDuration,
-            endTime: currentDuration + photoExtension
+            duration: clipDuration,
+            endTime: currentDuration + clipDuration,
+            title: media.title,
+            photographer: media.photographer,
+            tags: media.tags,
+            type: 'video',
+            quality: media.quality || 'medium',
+            width: media.width,
+            height: media.height,
+            metadata: {
+              searchPhrase: media.tags[0],
+              originalDuration: media.duration
+            }
+          });
+          
+          currentDuration += clipDuration;
+        } else if (media.type === 'photo') {
+          // For photos, add a 3-5 second duration
+          const photoExtension = Math.min(5, remainingDuration);
+          
+          timeline.photos.push({
+            id: media.id,
+            source: media.source,
+            url: media.url,
+            downloadUrl: media.url, // Direct link for frontend to use
+            startTime: currentDuration,
+            duration: photoExtension,
+            endTime: currentDuration + photoExtension,
+            title: media.title,
+            photographer: media.photographer,
+            tags: media.tags,
+            type: 'photo',
+            width: media.width,
+            height: media.height,
+            metadata: {
+              searchPhrase: media.tags[0]
+            }
           });
           
           currentDuration += photoExtension;
@@ -155,14 +149,22 @@ class VideoService {
       timeline.actualDuration = currentDuration;
       timeline.coverage = (currentDuration / duration) * 100;
 
-      console.log(`Timeline created: ${timeline.clips.length} clips, ${currentDuration}s/${duration}s (${timeline.coverage.toFixed(1)}% coverage)`);
+      console.log(`Timeline URLs created: ${timeline.clips.length} clips, ${timeline.photos.length} photos, ${currentDuration}s/${duration}s (${timeline.coverage.toFixed(1)}% coverage)`);
       
       return timeline;
 
     } catch (error) {
-      console.error('Error creating video timeline:', error);
+      console.error('Error creating video timeline URLs:', error);
       throw error;
     }
+  }
+
+  /**
+   * Original method that downloads media (kept for backward compatibility)
+   */
+  async createVideoTimeline(searchPhrases, duration, orientation = 'landscape') {
+    // For now, redirect to the URL-only version
+    return this.createVideoTimelineUrls(searchPhrases, duration, orientation);
   }
 
   /**
@@ -508,6 +510,97 @@ class VideoService {
     };
 
     console.log('✅ Mock timeline created with', clips.length, 'clips');
+    return timeline;
+  }
+
+  /**
+   * Generate mock timeline with URLs (for development when APIs are not available)
+   */
+  generateMockTimelineUrls(searchPhrases, duration, orientation = 'landscape') {
+    console.log('🎬 Generating mock timeline URLs for development...');
+    
+    const mockVideoUrls = [
+      'https://player.vimeo.com/external/371433846.sd.mp4?s=236da2f3c0fd273d2c6d9a064f3ae35579b2bbdf&profile_id=165&oauth2_token_id=57447761',
+      'https://cdn.pixabay.com/vimeo/539607/540p/4K_Sunset_Orange_Pink_Clouds_Moving_Time-lapse.mp4',
+      'https://cdn.pixabay.com/vimeo/502163/540p/Time_Lapse_Clouds_Sky.mp4',
+      'https://cdn.pixabay.com/vimeo/397384/540p/Ocean_Waves_Beach_Sand.mp4',
+      'https://cdn.pixabay.com/vimeo/458654/540p/Nature_Forest_Trees_Sunlight.mp4'
+    ];
+
+    const clips = [];
+    const photos = [];
+    const numClips = Math.min(searchPhrases.length, 5);
+    const clipDuration = duration / numClips;
+
+    for (let i = 0; i < numClips; i++) {
+      const phrase = searchPhrases[i] || `Mock Clip ${i + 1}`;
+      const startTime = i * clipDuration;
+      
+      clips.push({
+        id: `mock_video_${i}`,
+        source: 'mock',
+        url: mockVideoUrls[i % mockVideoUrls.length],
+        downloadUrl: mockVideoUrls[i % mockVideoUrls.length], // Same as URL for mock
+        startTime: startTime,
+        duration: clipDuration,
+        endTime: startTime + clipDuration,
+        title: `${phrase} (Development Mock Video)`,
+        photographer: 'Mock Artist',
+        tags: [phrase],
+        type: 'video',
+        quality: 'medium',
+        width: 1920,
+        height: 1080,
+        metadata: {
+          searchPhrase: phrase,
+          originalDuration: clipDuration + 2 // Mock longer original
+        }
+      });
+
+      // Add some mock photos too
+      if (i % 2 === 0) {
+        photos.push({
+          id: `mock_photo_${i}`,
+          source: 'mock',
+          url: `https://via.placeholder.com/1920x1080/4338ca/ffffff?text=${encodeURIComponent(phrase)}`,
+          downloadUrl: `https://via.placeholder.com/1920x1080/4338ca/ffffff?text=${encodeURIComponent(phrase)}`,
+          startTime: 0, // Will be set when used
+          duration: 3,
+          endTime: 3,
+          title: `${phrase} (Development Mock Photo)`,
+          photographer: 'Mock Photographer',
+          tags: [phrase],
+          type: 'photo',
+          width: 1920,
+          height: 1080,
+          metadata: {
+            searchPhrase: phrase
+          }
+        });
+      }
+    }
+
+    const timeline = {
+      totalDuration: duration,
+      actualDuration: duration,
+      orientation,
+      clips,
+      photos,
+      coverage: 100, // Mock full coverage
+      metadata: {
+        searchPhrases,
+        createdAt: new Date().toISOString(),
+        sources: ['mock-development'],
+        mockData: true,
+        note: 'This is mock data for development. Configure PEXELS_API_KEY and PIXABAY_API_KEY environment variables for real video data.',
+        apiKeysStatus: {
+          pexels: this.pexelsApiKey ? 'present-but-not-tested' : 'missing',
+          pixabay: this.pixabayApiKey ? 'present-but-not-tested' : 'missing'
+        }
+      }
+    };
+
+    console.log('✅ Mock timeline URLs created with', clips.length, 'video clips and', photos.length, 'photos');
     return timeline;
   }
 }

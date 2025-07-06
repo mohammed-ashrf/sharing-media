@@ -15,8 +15,9 @@ class Database {
       };
 
       if (process.env.NODE_ENV === 'production') {
-        options.ssl = true;
-        options.sslValidate = true;
+        // options.ssl = true;
+        // options.sslValidate = true;
+        console.log('running in Production');
       }
 
       await mongoose.connect(this.mongoUri, options);

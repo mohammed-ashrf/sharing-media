@@ -4,14 +4,42 @@ const path = require('path');
 
 class VoiceService {
   constructor() {
-    // ElevenLabs API configuration
-    this.apiKey = process.env.ELEVENLABS_API_KEY;
+    // ElevenLabs API configuration - ensure fresh env vars
     this.baseUrl = 'https://api.elevenlabs.io/v1';
-    this.defaultModel = process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2';
+    this.defaultModel = process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2'; // Use the universal model
     this.defaultVoiceId = process.env.ELEVENLABS_VOICE_ID || 'ErXwobaYiN019PkySvjV'; // Antoni voice
     
+    // Initialize without API key first
+    this.apiKey = null;
+    this.client = null;
+    
+    // Initialize API connection
+    this.initializeApiConnection();
+  }
+
+  /**
+   * Initialize API connection with fresh environment variables
+   */
+  initializeApiConnection() {
+    // Get fresh API key from environment
+    this.apiKey = process.env.ELEVENLABS_API_KEY;
+    
+    // Validate API key
+    if (!this.apiKey) {
+      console.error('❌ ELEVENLABS_API_KEY not found in environment variables');
+      console.error('Available env vars:', Object.keys(process.env).filter(key => key.includes('ELEVEN')));
+      return;
+    }
+
+    if (this.apiKey.length < 10) {
+      console.error('❌ ELEVENLABS_API_KEY appears to be invalid (too short)');
+      return;
+    }
+    
     // Debug logging
-    console.log('VoiceService initialized with API key:', this.apiKey ? `${this.apiKey.substring(0, 10)}...` : 'NOT SET');
+    console.log('✅ VoiceService initialized with API key:', `${this.apiKey.substring(0, 10)}...`);
+    console.log('🔧 Using model:', this.defaultModel);
+    console.log('🎙️ Default voice:', this.defaultVoiceId);
     
     // Configure axios instance for ElevenLabs API
     this.client = axios.create({
@@ -19,8 +47,56 @@ class VoiceService {
       headers: {
         'xi-api-key': this.apiKey,
         'Content-Type': 'application/json'
-      }
+      },
+      timeout: 30000 // 30 second timeout
     });
+
+    // Add request interceptor for debugging
+    this.client.interceptors.request.use(
+      (config) => {
+        console.log(`🌐 ElevenLabs API Request: ${config.method?.toUpperCase()} ${config.url}`);
+        return config;
+      },
+      (error) => {
+        console.error('❌ Request interceptor error:', error);
+        return Promise.reject(error);
+      }
+    );
+
+    // Add response interceptor for debugging
+    this.client.interceptors.response.use(
+      (response) => {
+        console.log(`✅ ElevenLabs API Response: ${response.status} ${response.statusText}`);
+        return response;
+      },
+      (error) => {
+        console.error('❌ ElevenLabs API Error:', {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data,
+          message: error.message
+        });
+        return Promise.reject(error);
+      }
+    );
+  }
+
+  /**
+   * Ensure API connection is ready
+   */
+  ensureApiReady() {
+    if (!this.apiKey || !this.client) {
+      console.log('🔄 Re-initializing API connection...');
+      this.initializeApiConnection();
+    }
+
+    if (!this.apiKey) {
+      throw new Error('ElevenLabs API key is not configured. Please check your environment variables.');
+    }
+
+    if (!this.client) {
+      throw new Error('ElevenLabs API client is not initialized.');
+    }
   }
 
   /**
@@ -29,15 +105,13 @@ class VoiceService {
    */
   async getVoices() {
     try {
-      if (!this.apiKey) {
-        console.warn('ElevenLabs API key not configured, returning mock data');
-        return this.getMockVoices();
-      }
+      // Ensure API is ready
+      this.ensureApiReady();
 
       const response = await this.client.get('/voices');
       const { voices } = response.data;
       
-      // Format voices for frontend consumption based on the API structure
+      // Format voices for frontend consumption
       const formattedVoices = voices.map(voice => ({
         id: voice.voice_id,
         name: voice.name,
@@ -49,9 +123,17 @@ class VoiceService {
         settings: voice.settings || null
       }));
 
+      console.log(`✅ Retrieved ${formattedVoices.length} voices from ElevenLabs`);
       return formattedVoices;
     } catch (error) {
       console.error('Error fetching voices from ElevenLabs:', error.message);
+      
+      if (error.response?.status === 401) {
+        console.warn('❌ ElevenLabs API authentication failed, returning mock voices');
+      } else {
+        console.warn('❌ ElevenLabs API error, returning mock voices');
+      }
+      
       // Fallback to mock data if API fails
       return this.getMockVoices();
     }
@@ -197,6 +279,167 @@ class VoiceService {
       }
       
       throw new Error('Failed to generate speech');
+    }
+  }
+
+  /**
+   * Generate speech using ElevenLabs V3 model (expressive)
+   * @param {Object} options - Generation options
+   * @param {string} options.text - Text to convert to speech
+   * @param {string} options.voiceId - ElevenLabs voice ID
+   * @param {Object} options.voiceSettings - Voice settings
+   * @returns {Promise<Buffer>} Audio buffer
+   */
+  async generateSpeechV3(options) {
+    const { text, voiceId, voiceSettings = {} } = options;
+
+    // Validate inputs
+    if (!text || typeof text !== 'string') {
+      throw new Error('Text is required and must be a string');
+    }
+
+    if (!voiceId) {
+      throw new Error('Voice ID is required');
+    }
+
+    if (text.trim().length === 0) {
+      throw new Error('Text cannot be empty');
+    }
+
+    // Ensure API is ready
+    try {
+      this.ensureApiReady();
+    } catch (error) {
+      console.error('❌ API initialization failed:', error.message);
+      throw new Error(`ElevenLabs API configuration error: ${error.message}`);
+    }
+
+    // V3 specific settings with enhanced expressiveness
+    const settings = {
+      stability: Math.max(0, Math.min(1, voiceSettings.stability || 0.5)),
+      similarity_boost: Math.max(0, Math.min(1, voiceSettings.similarity || 0.8)),
+      style: Math.max(0, Math.min(1, voiceSettings.styleExaggeration || 0.3)),
+      use_speaker_boost: true
+    };
+
+    const requestData = {
+      text: text.trim(),
+      model_id: this.defaultModel,
+      voice_settings: settings,
+      output_format: 'mp3_44100_128',
+      optimize_streaming_latency: 0
+    };
+
+    // Log generation attempt
+    console.log(`🎙️ Generating V3 speech with voice ${voiceId} for ${text.length} characters`);
+    console.log('🔧 Model:', this.defaultModel);
+    console.log('⚙️ Settings:', settings);
+    console.log('🔑 API Key present:', !!this.apiKey);
+    console.log('📤 Text being sent to ElevenLabs:');
+    console.log('┌─────────────────────────────────────────────────────────────────────────────────────┐');
+    console.log('│ ELEVENLABS INPUT TEXT:                                                              │');
+    console.log('└─────────────────────────────────────────────────────────────────────────────────────┘');
+    console.log(text);
+    console.log('┌─────────────────────────────────────────────────────────────────────────────────────┐');
+
+    try {
+      // Generate audio using REST API
+      const response = await this.client.post(`/text-to-speech/${voiceId}`, requestData, {
+        headers: {
+          'Accept': 'audio/mpeg',
+          'Content-Type': 'application/json',
+          'xi-api-key': this.apiKey // Explicitly include API key
+        },
+        responseType: 'arraybuffer',
+        timeout: 45000 // 45 second timeout for longer texts
+      });
+
+      const audioBuffer = Buffer.from(response.data);
+      console.log(`✅ Generated V3 audio: ${audioBuffer.length} bytes`);
+      
+      // Validate audio buffer
+      if (audioBuffer.length < 100) {
+        throw new Error('Generated audio file is too small, may be corrupted');
+      }
+
+      return audioBuffer;
+
+    } catch (error) {
+      console.error('❌ ElevenLabs V3 generation error:', {
+        message: error.message,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        voiceId,
+        textLength: text.length
+      });
+      
+      // Handle specific error cases
+      if (error.response?.status === 401) {
+        // Re-initialize API connection and try once more
+        console.log('🔄 401 error - re-initializing API connection...');
+        this.initializeApiConnection();
+        
+        if (!this.apiKey) {
+          throw new Error('ElevenLabs API authentication failed. API key is missing or invalid.');
+        }
+        
+        throw new Error('ElevenLabs API authentication failed. Please check your API key and try again.');
+      } else if (error.response?.status === 403) {
+        let errorMessage = 'Access denied to ElevenLabs resource';
+        
+        try {
+          const errorData = error.response.data;
+          let parsedData;
+          
+          if (Buffer.isBuffer(errorData)) {
+            parsedData = JSON.parse(errorData.toString());
+          } else if (typeof errorData === 'string') {
+            parsedData = JSON.parse(errorData);
+          } else {
+            parsedData = errorData;
+          }
+          
+          if (parsedData?.detail?.status === 'model_access_denied') {
+            errorMessage = `Model access denied. Your account doesn't have access to model '${this.defaultModel}'. Please upgrade your plan or use a different model.`;
+          } else if (parsedData?.detail?.message) {
+            errorMessage = parsedData.detail.message;
+          }
+        } catch (parseError) {
+          console.error('Could not parse 403 error response:', parseError);
+        }
+        
+        throw new Error(errorMessage);
+      } else if (error.response?.status === 400) {
+        let errorMessage = 'Invalid request to ElevenLabs API';
+        
+        try {
+          const errorData = error.response.data;
+          if (typeof errorData === 'string') {
+            errorMessage = errorData;
+          } else if (errorData?.detail) {
+            if (typeof errorData.detail === 'string') {
+              errorMessage = errorData.detail;
+            } else if (errorData.detail?.message) {
+              errorMessage = errorData.detail.message;
+            }
+          }
+        } catch (parseError) {
+          console.error('Could not parse error response:', parseError);
+        }
+        
+        throw new Error(`ElevenLabs API error: ${errorMessage}`);
+      } else if (error.response?.status === 429) {
+        throw new Error('ElevenLabs API rate limit exceeded. Please wait a moment and try again.');
+      } else if (error.response?.status === 422) {
+        throw new Error('Voice or text validation failed. Please check your voice ID and ensure text is valid.');
+      } else if (error.code === 'ECONNABORTED') {
+        throw new Error('Request timeout. The text may be too long or the service is temporarily slow.');
+      } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+        throw new Error('Cannot connect to ElevenLabs API. Please check your internet connection.');
+      } else {
+        throw new Error(`ElevenLabs API error: ${error.message}`);
+      }
     }
   }
 
@@ -380,5 +623,5 @@ class VoiceService {
   }
 }
 
-// Export singleton instance
-module.exports = new VoiceService();
+// Export class instead of singleton to avoid environment loading issues
+module.exports = VoiceService;

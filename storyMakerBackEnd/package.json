@@ -7,7 +7,11 @@
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
     "test": "jest",
-    "seed": "node src/config/seeders/index.js"
+    "test:media": "node test-media-api.js",
+    "seed": "node src/config/seeders/index.js",
+    "setup:production": "./setup-production.sh",
+    "media:process": "node -e \"require('./src/services/mediaService').processPendingMedia()\"",
+    "logs": "tail -f logs/app.log"
   },
   "author": "Mohammed younis",
   "license": "ISC",

@@ -38,9 +38,9 @@ const generateVideoTimeline = asyncHandler(async (req, res, next) => {
     // Combine search phrases with custom phrases
     const allSearchPhrases = [...searchPhrases, ...customPhrases].filter(phrase => phrase && phrase.trim());
 
-    // Generate video timeline
-    console.log(`Generating video timeline for ${allSearchPhrases.length} search phrases`);
-    const timeline = await videoService.createVideoTimeline(allSearchPhrases, duration, orientation);
+    // Generate video timeline with URLs only (no downloading)
+    console.log(`Generating video timeline URLs for ${allSearchPhrases.length} search phrases`);
+    const timeline = await videoService.createVideoTimelineUrls(allSearchPhrases, duration, orientation);
 
     // If storyId provided, update the story with video timeline
     if (storyId) {
@@ -60,11 +60,19 @@ const generateVideoTimeline = asyncHandler(async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      message: 'Video timeline generated successfully',
+      message: 'Video timeline URLs generated successfully',
       data: {
         timeline,
-        summary: videoService.getTimelineSummary(timeline),
-        storyId: storyId || null
+        summary: {
+          totalClips: timeline.clips.length,
+          totalPhotos: timeline.photos.length,
+          totalDuration: timeline.totalDuration,
+          actualDuration: timeline.actualDuration,
+          coverage: timeline.coverage,
+          sources: timeline.metadata.sources
+        },
+        storyId: storyId || null,
+        note: 'Timeline contains URLs to external media. Frontend should handle downloading/caching as needed.'
       }
     });
 
