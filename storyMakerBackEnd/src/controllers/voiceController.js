@@ -112,8 +112,8 @@ const generateSpeech = asyncHandler(async (req, res, next) => {
     }
 
     // Validate text length (reasonable limit for processing)
-    if (text.length > 10000) {
-      return next(new ErrorResponse('Text is too long. Maximum 10,000 characters allowed.', 400));
+    if (text.length > 20000) {
+      return next(new ErrorResponse('Text is too long. Maximum 20,000 characters allowed.', 400));
     }
 
     // Step 1: Send script to OpenAI for voice direction optimization
@@ -164,7 +164,7 @@ ${text}`;
               content: voiceDirectorPrompt
             }
           ],
-          max_tokens: 4000,
+          max_tokens: 12000,
           temperature: 0.7
         });
 
@@ -594,8 +594,8 @@ const generateSpeechBlob = asyncHandler(async (req, res, next) => {
     }
 
     // Validate text length (reasonable limit for processing)
-    if (text.length > 10000) {
-      return next(new ErrorResponse('Text is too long. Maximum 10,000 characters allowed.', 400));
+    if (text.length > 20000) {
+      return next(new ErrorResponse('Text is too long. Maximum 20,000 characters allowed.', 400));
     }
 
     // Step 1: Send script to OpenAI for voice direction optimization
@@ -641,7 +641,7 @@ ${text}`;
             content: voiceDirectorPrompt
           }
         ],
-        max_tokens: 4000,
+        max_tokens: 12000,
         temperature: 0.3
       });
 
