@@ -1157,6 +1157,124 @@ const getVideoStyles = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Generate video ideas for shorts using OpenAI
+ * @route   POST /api/v1/stories/generate-ideas
+ * @access  Private
+ */
+const generateIdeas = async (req, res) => {
+  try {
+    // Check if OpenAI is configured
+    if (!openai) {
+      return res.status(503).json({
+        success: false,
+        message: 'Ideas generation service is not configured. Please contact administrator.'
+      });
+    }
+
+    const { niche, videoStyle } = req.body;
+
+    // Validate required fields
+    if (!niche || !videoStyle) {
+      return res.status(400).json({
+        success: false,
+        message: 'Both niche and video style are required'
+      });
+    }
+
+    // Map video style codes to readable names
+    const videoStyleNames = {
+      'redditStorytime': 'Reddit-style story time',
+      'didYouKnow': 'Did you know?',
+      'motivation': 'Motivation',
+      'quizGame': 'Quiz & guessing games',
+      'memeGoogleSearch': 'Meme google search shorts',
+      'dialogueSkit': '2-person Dialogue skit',
+      'newsExplainer': 'News explainers & event breakdowns',
+      'lifePOV': 'Life POV'
+    };
+
+    const styleDisplayName = videoStyleNames[videoStyle] || videoStyle;
+
+    // Create the prompt for OpenAI
+    const prompt = `I am about to create YouTube shorts video and instagram reels that will go viral but I need your to suggest a list of 50 video topic ideas for me based on my niche and video style.
+
+My niche is: ${niche}
+My video style is: ${styleDisplayName}
+
+The video idea must be an idea that can be fully created with AI, be short-form friendly, and hook the viewer instantly.
+Just show the list of responses, don't say or do anything else, do not add instructions`;
+
+    console.log('🎯 Generating ideas with prompt:', prompt);
+
+    // Call OpenAI API
+    const response = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      max_tokens: 2000,
+      temperature: 0.8,
+    });
+
+    const generatedContent = response.choices[0]?.message?.content;
+
+    if (!generatedContent) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to generate ideas. Please try again.'
+      });
+    }
+
+    // Parse the response into individual ideas
+    const ideas = parseIdeasFromResponse(generatedContent);
+
+    console.log(`✅ Generated ${ideas.length} ideas for niche: ${niche}, style: ${styleDisplayName}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Video ideas generated successfully',
+      data: {
+        ideas,
+        niche,
+        videoStyle,
+        styleDisplayName,
+        totalCount: ideas.length
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error generating video ideas:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error generating video ideas',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+};
+
+/**
+ * Helper function to parse ideas from OpenAI response
+ */
+function parseIdeasFromResponse(content) {
+  // Split the content into lines and clean them up
+  const lines = content.split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 0)
+    .filter(line => !line.match(/^(Here are|Here's|Below are|Video Ideas|Ideas:|Topic Ideas|Video Topics)/i))
+    .map(line => {
+      // Remove numbering (1., 2., 1), 2), etc.)
+      return line.replace(/^\d+[\.\)\:\-\s]+/, '').trim();
+    })
+    .filter(line => line.length > 10) // Filter out very short lines
+    .slice(0, 50); // Limit to 50 ideas max
+
+  return lines;
+}
+
 module.exports = {
   generateStory,
   getGenerationStatus,
@@ -1169,5 +1287,6 @@ module.exports = {
   searchStories,
   exportStory,
   duplicateStory,
-  getVideoStyles
+  getVideoStyles,
+  generateIdeas
 };

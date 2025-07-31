@@ -12,7 +12,8 @@ const {
   generateStorySummary,
   searchStories,
   exportStory,
-  duplicateStory
+  duplicateStory,
+  generateIdeas
 } = require('../controllers/storyController');
 const { authenticate } = require('../middleware/auth');
 
@@ -178,6 +179,35 @@ const handleValidationErrors = (req, res, next) => {
   next();
 };
 
+// Validation middleware for generating ideas
+const validateIdeaGeneration = [
+  body('niche')
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('Niche must be between 1 and 100 characters'),
+  
+  body('videoStyle')
+    .isIn(['redditStorytime', 'didYouKnow', 'motivation', 'quizGame', 'memeGoogleSearch', 'dialogueSkit', 'newsExplainer', 'lifePOV'])
+    .withMessage('Video style must be one of: redditStorytime, didYouKnow, motivation, quizGame, memeGoogleSearch, dialogueSkit, newsExplainer, lifePOV'),
+  
+  // Handle validation errors
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: errors.array().map(error => ({
+          field: error.path,
+          message: error.msg,
+          value: error.value
+        }))
+      });
+    }
+    next();
+  }
+];
+
 // Test endpoint for frontend development (no auth required) - MUST be before auth middleware
 router.route('/test')
   .get((req, res) => {
@@ -253,6 +283,13 @@ router.route('/generate')
     validateStoryGeneration,
     handleValidationErrors,
     generateStory
+  );
+
+router.route('/generate-ideas')
+  .post(
+    authenticate, // Require authentication
+    validateIdeaGeneration,
+    generateIdeas
   );
 
 router.route('/search')
