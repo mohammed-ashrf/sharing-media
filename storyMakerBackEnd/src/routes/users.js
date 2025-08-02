@@ -7,7 +7,9 @@ const {
   deleteUser,
   deactivateUser,
   activateUser,
-  getUserStats
+  getUserStats,
+  saveApiKeys,
+  testApiKeys
 } = require('../controllers/userController');
 
 const { authenticate, requireAdmin } = require('../middleware/auth');
@@ -16,10 +18,23 @@ const { handleValidationErrors } = require('../middleware/validation');
 
 const router = express.Router();
 
-// All routes require authentication
+// API Key management routes (require authentication only)
+router.post('/api-keys', authenticate, [
+  body('openai').notEmpty().withMessage('OpenAI API key is required'),
+  body('murf').notEmpty().withMessage('Murf AI API key is required'),
+  handleValidationErrors
+], saveApiKeys);
+
+router.post('/test-api-keys', authenticate, [
+  body('openai').notEmpty().withMessage('OpenAI API key is required'),
+  body('murf').notEmpty().withMessage('Murf AI API key is required'),
+  handleValidationErrors
+], testApiKeys);
+
+// All routes below require authentication
 router.use(authenticate);
 
-// All routes require admin privileges
+// All routes below require admin privileges
 router.use(requireAdmin);
 
 // Validation for user creation

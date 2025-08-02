@@ -30,6 +30,9 @@ const analyticsRoutes = require('./routes/analytics');
 const templateRoutes = require('./routes/templates');
 const mediaRoutes = require('./routes/media');
 const elevenLabsVoicesRoutes = require('./routes/voices'); // New ElevenLabs voices route
+const subscriptionRoutes = require('./routes/subscription'); // Subscription management
+const subuserAuthRoutes = require('./routes/subuserAuth'); // Subuser authentication
+const subuserRoutes = require('./routes/subusers'); // Subuser management
 
 // Create Express app
 const app = express();
@@ -179,6 +182,9 @@ app.use('/api/v1/analytics', analyticsRoutes);
 app.use('/api/v1/templates', templateRoutes);
 app.use('/api/v1/media', mediaRoutes);
 app.use('/api/v1/voices', elevenLabsVoicesRoutes); // New ElevenLabs voices endpoint
+app.use('/api/v1/subscription', subscriptionRoutes); // Subscription management
+app.use('/api/v1/subuser', subuserAuthRoutes); // Subuser authentication
+app.use('/api/v1/subusers', subuserRoutes); // Subuser management
 
 // Welcome route
 app.get('/', (req, res) => {

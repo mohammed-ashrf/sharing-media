@@ -147,7 +147,105 @@ const userSchema = new mongoose.Schema({
       default: Date.now,
       expires: 2592000 // 30 days
     }
-  }]
+  }],
+  
+  // Subscription Information
+  subscription: {
+    plan: {
+      type: String,
+      enum: ['standard', 'pro', 'business_standard', 'business_unlimited'],
+      default: 'standard'
+    },
+    status: {
+      type: String,
+      enum: ['active', 'inactive', 'cancelled', 'expired'],
+      default: 'inactive'
+    },
+    fastspringSubscriptionId: {
+      type: String,
+      unique: true,
+      sparse: true
+    },
+    startDate: {
+      type: Date
+    },
+    endDate: {
+      type: Date
+    },
+    credits: {
+      total: {
+        type: Number,
+        default: 0
+      },
+      used: {
+        type: Number,
+        default: 0
+      },
+      remaining: {
+        type: Number,
+        default: 0
+      }
+    },
+    features: {
+      pcLicenses: {
+        type: Number,
+        default: 1 // Standard gets 1 PC
+      },
+      multiUserAccess: {
+        type: Number,
+        default: 0 // Only business plans get multi-user access
+      },
+      canConnectOwnAPI: {
+        type: Boolean,
+        default: false // Only business plans can connect own API
+      }
+    }
+  },
+  
+  // Custom API Keys (Business Unlimited only)
+  apiKeys: {
+    openai: {
+      type: String,
+      select: false // Don't include API keys in queries by default
+    },
+    murf: {
+      type: String,
+      select: false // Don't include API keys in queries by default
+    },
+    updatedAt: {
+      type: Date
+    }
+  },
+  
+  // Active PC Sessions
+  activeSessions: [{
+    deviceId: {
+      type: String,
+      required: true
+    },
+    deviceName: {
+      type: String
+    },
+    lastActive: {
+      type: Date,
+      default: Date.now
+    },
+    ipAddress: {
+      type: String
+    }
+  }],
+  
+  // API Keys for Business Plans
+  apiKeys: {
+    openAI: {
+      type: String,
+      select: false
+    },
+    elevenLabs: {
+      type: String,
+      select: false
+    }
+  }
 }, {
   timestamps: true,
   toJSON: { virtuals: true },
@@ -295,6 +393,126 @@ userSchema.methods.removeAllRefreshTokens = function() {
   return this.save();
 };
 
+// Subscription management methods
+userSchema.methods.updateSubscription = function(planData) {
+  const planLimits = {
+    standard: {
+      pcLicenses: 1,
+      credits: 100000,
+      multiUserAccess: 0,
+      canConnectOwnAPI: false
+    },
+    pro: {
+      pcLicenses: 5,
+      credits: 1000000,
+      multiUserAccess: 0,
+      canConnectOwnAPI: false
+    },
+    business_standard: {
+      pcLicenses: 100,
+      credits: 0, // Unlimited with own API
+      multiUserAccess: 50,
+      canConnectOwnAPI: true
+    },
+    business_unlimited: {
+      pcLicenses: -1, // Unlimited
+      credits: 0, // Unlimited with own API
+      multiUserAccess: 100,
+      canConnectOwnAPI: true
+    }
+  };
+  
+  const limits = planLimits[planData.plan];
+  
+  this.subscription.plan = planData.plan;
+  this.subscription.status = planData.status || 'active';
+  this.subscription.fastspringSubscriptionId = planData.fastspringSubscriptionId;
+  this.subscription.startDate = planData.startDate || new Date();
+  this.subscription.endDate = planData.endDate;
+  
+  // Update credits only if it's a credit-based plan
+  if (limits.credits > 0) {
+    this.subscription.credits.total = limits.credits;
+    this.subscription.credits.remaining = limits.credits - this.subscription.credits.used;
+  }
+  
+  // Update features
+  this.subscription.features.pcLicenses = limits.pcLicenses;
+  this.subscription.features.multiUserAccess = limits.multiUserAccess;
+  this.subscription.features.canConnectOwnAPI = limits.canConnectOwnAPI;
+  
+  return this.save();
+};
+
+userSchema.methods.useCredits = function(amount) {
+  if (this.subscription.credits.remaining < amount) {
+    throw new Error('Insufficient credits');
+  }
+  
+  this.subscription.credits.used += amount;
+  this.subscription.credits.remaining -= amount;
+  
+  return this.save();
+};
+
+userSchema.methods.canAddPC = function() {
+  const maxSessions = this.subscription.features.pcLicenses;
+  
+  // Unlimited PCs
+  if (maxSessions === -1) return true;
+  
+  // Check current active sessions
+  const activeSessions = this.activeSessions.filter(
+    session => session.lastActive > new Date(Date.now() - 24 * 60 * 60 * 1000) // Active in last 24 hours
+  );
+  
+  return activeSessions.length < maxSessions;
+};
+
+userSchema.methods.addActiveSession = function(deviceData) {
+  if (!this.canAddPC()) {
+    throw new Error('PC license limit exceeded');
+  }
+  
+  // Remove existing session for this device
+  this.activeSessions = this.activeSessions.filter(
+    session => session.deviceId !== deviceData.deviceId
+  );
+  
+  // Add new session
+  this.activeSessions.push({
+    deviceId: deviceData.deviceId,
+    deviceName: deviceData.deviceName,
+    lastActive: new Date(),
+    ipAddress: deviceData.ipAddress
+  });
+  
+  return this.save();
+};
+
+userSchema.methods.removeActiveSession = function(deviceId) {
+  this.activeSessions = this.activeSessions.filter(
+    session => session.deviceId !== deviceId
+  );
+  return this.save();
+};
+
+userSchema.methods.canCreateSubuser = function() {
+  const maxSubusers = this.subscription.features.multiUserAccess;
+  return maxSubusers > 0; // Will be checked against actual count in the Subuser model
+};
+
+userSchema.methods.setAPIKeys = function(apiKeys) {
+  if (!this.subscription.features.canConnectOwnAPI) {
+    throw new Error('API key connection not available for this plan');
+  }
+  
+  if (apiKeys.openAI) this.apiKeys.openAI = apiKeys.openAI;
+  if (apiKeys.elevenLabs) this.apiKeys.elevenLabs = apiKeys.elevenLabs;
+  
+  return this.save();
+};
+
 // Static method to find user by email
 userSchema.statics.findByEmail = function(email) {
   return this.findOne({ email: email.toLowerCase() });
@@ -332,6 +550,7 @@ userSchema.methods.toJSON = function() {
   delete userObject.loginAttempts;
   delete userObject.lockUntil;
   delete userObject.refreshTokens;
+  delete userObject.apiKeys; // Hide API keys
   delete userObject.__v;
   
   return userObject;

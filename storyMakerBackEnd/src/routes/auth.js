@@ -38,8 +38,8 @@ router.use(authenticate); // All routes after this middleware are protected
 
 router.post('/logout', logout);
 router.get('/me', getMe);
-router.put('/updateprofile', validateUpdateProfile, updateProfile);
-router.put('/changepassword', validateChangePassword, changePassword);
+router.put('/profile', validateUpdateProfile, updateProfile);
+router.put('/change-password', validateChangePassword, changePassword);
 router.post('/resend-verification', resendVerification);
 
 module.exports = router;

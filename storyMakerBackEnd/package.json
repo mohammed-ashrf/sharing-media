@@ -9,6 +9,7 @@
     "test": "jest",
     "test:media": "node test-media-api.js",
     "seed": "node src/config/seeders/index.js",
+    "seed:subscription": "node src/config/seeders/subscriptionSeeder.js",
     "setup:production": "./setup-production.sh",
     "media:process": "node -e \"require('./src/services/mediaService').processPendingMedia()\"",
     "logs": "tail -f logs/app.log"

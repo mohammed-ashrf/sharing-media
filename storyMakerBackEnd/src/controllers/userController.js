@@ -299,6 +299,86 @@ const getUserStats = asyncHandler(async (req, res, next) => {
   });
 });
 
+/**
+ * @desc    Save user API keys
+ * @route   POST /api/v1/users/api-keys
+ * @access  Private
+ */
+const saveApiKeys = asyncHandler(async (req, res, next) => {
+  const { openai, murf } = req.body;
+
+  if (!openai || !murf) {
+    return next(new AppError('Both OpenAI and Murf AI API keys are required', 400));
+  }
+
+  const user = await User.findById(req.user.id);
+  if (!user) {
+    return next(new AppError('User not found', 404));
+  }
+
+  // Only allow business unlimited users to save their own API keys
+  if (user.subscription?.plan !== 'business_unlimited') {
+    return next(new AppError('Only Business Unlimited users can save custom API keys', 403));
+  }
+
+  // Save API keys (in production, these should be encrypted)
+  user.apiKeys = {
+    openai: openai.trim(),
+    murf: murf.trim(),
+    updatedAt: new Date()
+  };
+
+  await user.save();
+
+  res.status(200).json({
+    success: true,
+    message: 'API keys saved successfully'
+  });
+});
+
+/**
+ * @desc    Test user API keys
+ * @route   POST /api/v1/users/test-api-keys
+ * @access  Private
+ */
+const testApiKeys = asyncHandler(async (req, res, next) => {
+  const { openai, murf } = req.body;
+
+  if (!openai || !murf) {
+    return next(new AppError('Both OpenAI and Murf AI API keys are required', 400));
+  }
+
+  try {
+    // Test OpenAI API key
+    const openaiResponse = await fetch('https://api.openai.com/v1/models', {
+      headers: {
+        'Authorization': `Bearer ${openai}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!openaiResponse.ok) {
+      throw new Error('Invalid OpenAI API key');
+    }
+
+    // Test Murf AI API key (basic validation - adjust based on Murf API structure)
+    if (!murf || murf.length < 10) {
+      throw new Error('Invalid Murf AI API key format');
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'All API keys are valid'
+    });
+
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
 module.exports = {
   getUsers,
   getUser,
@@ -307,5 +387,7 @@ module.exports = {
   deleteUser,
   deactivateUser,
   activateUser,
-  getUserStats
+  getUserStats,
+  saveApiKeys,
+  testApiKeys
 };

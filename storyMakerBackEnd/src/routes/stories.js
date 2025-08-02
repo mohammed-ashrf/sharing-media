@@ -15,7 +15,7 @@ const {
   duplicateStory,
   generateIdeas
 } = require('../controllers/storyController');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requirePermission } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -275,11 +275,12 @@ router.route('/test')
 // Routes with authentication
 router.route('/')
   .get(authenticate, getStories) // Get all stories for user with filtering and search
-  .post(authenticate, createStory); // Create a new story
+  .post(authenticate, requirePermission('canCreateStories'), createStory); // Create a new story
 
 router.route('/generate')
   .post(
     authenticate, // Require authentication
+    requirePermission('canCreateStories'), // Require story creation permission
     validateStoryGeneration,
     handleValidationErrors,
     generateStory
@@ -288,6 +289,7 @@ router.route('/generate')
 router.route('/generate-ideas')
   .post(
     authenticate, // Require authentication
+    requirePermission('canCreateStories'), // Require story creation permission
     validateIdeaGeneration,
     generateIdeas
   );
@@ -296,10 +298,10 @@ router.route('/search')
   .get(authenticate, searchStories); // Advanced search endpoint
 
 router.route('/export/:id')
-  .get(authenticate, exportStory); // Export story in different formats
+  .get(authenticate, requirePermission('canExportVideo'), exportStory); // Export story in different formats
 
 router.route('/duplicate/:id')
-  .post(authenticate, duplicateStory); // Duplicate an existing story
+  .post(authenticate, requirePermission('canCreateStories'), duplicateStory); // Duplicate an existing story
 
 // Video rendering endpoint
 router.route('/render-video')
@@ -336,8 +338,8 @@ router.route('/video-styles')
 
 router.route('/:id')
   .get(authenticate, getStory) // Get single story
-  .put(authenticate, updateStory) // Update story
-  .delete(authenticate, deleteStory); // Delete story
+  .put(authenticate, requirePermission('canEditStories'), updateStory) // Update story
+  .delete(authenticate, requirePermission('canDeleteStories'), deleteStory); // Delete story
 
 router.route('/:id/summary')
   .post(authenticate, generateStorySummary); // Generate AI summary

@@ -220,19 +220,7 @@ ${text}`;
       console.log(`✅ Voice generation successful: ${audioBuffer.length} bytes`);
     } catch (voiceError) {
       console.error('❌ Voice generation failed:', voiceError.message);
-      
-      // Enhanced error handling for Murf AI specific errors
-      if (voiceError.message.includes('api-key')) {
-        return next(new ErrorResponse('Murf AI API key is missing or invalid. Please check your configuration.', 401));
-      } else if (voiceError.message.includes('Missing \'api-key\'')) {
-        return next(new ErrorResponse('Murf AI API authentication failed. Please check your API key configuration.', 401));
-      } else if (voiceError.message.includes('Bad request')) {
-        return next(new ErrorResponse('Invalid request to Murf AI. Please check your voice ID and text content.', 400));
-      } else if (voiceError.message.includes('Insufficient credits')) {
-        return next(new ErrorResponse('Insufficient credits in your Murf AI account. Please upgrade your plan.', 402));
-      } else {
-        return next(new ErrorResponse(voiceError.message, 500));
-      }
+      return next(new ErrorResponse(voiceError.message, 500));
     }
 
     // Generate filename
@@ -698,19 +686,7 @@ ${text}`;
       console.log(`✅ Voice generation successful: ${audioBuffer.length} bytes`);
     } catch (voiceError) {
       console.error('❌ Voice generation failed:', voiceError.message);
-      
-      // Enhanced error handling for Murf AI specific errors
-      if (voiceError.message.includes('api-key')) {
-        return next(new ErrorResponse('Murf AI API key is missing or invalid. Please check your configuration.', 401));
-      } else if (voiceError.message.includes('Missing \'api-key\'')) {
-        return next(new ErrorResponse('Murf AI API authentication failed. Please check your API key configuration.', 401));
-      } else if (voiceError.message.includes('Bad request')) {
-        return next(new ErrorResponse('Invalid request to Murf AI. Please check your voice ID and text content.', 400));
-      } else if (voiceError.message.includes('Insufficient credits')) {
-        return next(new ErrorResponse('Insufficient credits in your Murf AI account. Please upgrade your plan.', 402));
-      } else {
-        return next(new ErrorResponse(voiceError.message, 500));
-      }
+      return next(new ErrorResponse(voiceError.message, 500));
     }
 
     // Generate filename for metadata

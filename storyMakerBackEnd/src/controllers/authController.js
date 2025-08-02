@@ -201,58 +201,75 @@ const getMe = asyncHandler(async (req, res, next) => {
 
 /**
  * @desc    Update user profile
- * @route   PUT /api/v1/auth/updateprofile
+ * @route   PUT /api/v1/auth/profile
  * @access  Private
  */
-const updateProfile = asyncHandler(async (req, res, next) => {
-  const fieldsToUpdate = {
-    firstName: req.body.firstName,
-    lastName: req.body.lastName
-  };
+const updateProfile = asyncHandler(async (req, res) => {
+  const { firstName, lastName, email } = req.body;
 
-  // Remove undefined fields
-  Object.keys(fieldsToUpdate).forEach(key => {
-    if (fieldsToUpdate[key] === undefined) {
-      delete fieldsToUpdate[key];
+  // Check if email is already used (if email is being changed)
+  if (email && email.toLowerCase() !== req.user.email) {
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    if (existingUser) {
+      throw new AppError('Email address is already registered', 400);
     }
-  });
 
-  const user = await User.findByIdAndUpdate(req.user._id, fieldsToUpdate, {
-    new: true,
-    runValidators: true
-  });
+    // If user is a subuser, also check subuser emails
+    if (req.user.role === 'subuser') {
+      const Subuser = require('../models/Subuser');
+      const existingSubuser = await Subuser.findOne({ 
+        email: email.toLowerCase(),
+        _id: { $ne: req.user._id }
+      });
+      if (existingSubuser) {
+        throw new AppError('Email address is already registered', 400);
+      }
+    }
+  }
+
+  // Update user
+  const updatedUser = await User.findByIdAndUpdate(
+    req.user._id,
+    {
+      firstName: firstName || req.user.firstName,
+      lastName: lastName || req.user.lastName,
+      email: email ? email.toLowerCase() : req.user.email
+    },
+    { new: true, runValidators: true }
+  ).select('-password');
 
   res.status(200).json({
     success: true,
     message: 'Profile updated successfully',
-    data: { user }
+    data: updatedUser
   });
 });
 
 /**
  * @desc    Change password
- * @route   PUT /api/v1/auth/changepassword
+ * @route   PUT /api/v1/auth/change-password
  * @access  Private
  */
-const changePassword = asyncHandler(async (req, res, next) => {
+const changePassword = asyncHandler(async (req, res) => {
   const { currentPassword, newPassword } = req.body;
 
-  // Get user with current password
+  // Get user with password
   const user = await User.findById(req.user._id).select('+password');
 
   // Check current password
-  const isCurrentPasswordCorrect = await user.comparePassword(currentPassword);
-  
-  if (!isCurrentPasswordCorrect) {
-    return next(new AppError('Current password is incorrect', 400));
+  const isCurrentPasswordValid = await user.comparePassword(currentPassword);
+  if (!isCurrentPasswordValid) {
+    throw new AppError('Current password is incorrect', 400);
   }
 
   // Update password
   user.password = newPassword;
-  user.passwordChangedAt = new Date();
   await user.save();
 
-  sendTokenResponse(user, 200, res, 'Password changed successfully');
+  res.status(200).json({
+    success: true,
+    message: 'Password changed successfully'
+  });
 });
 
 /**

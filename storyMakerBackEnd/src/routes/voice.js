@@ -13,7 +13,8 @@ const {
 } = require('../controllers/voiceController');
 
 // Import middleware
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requirePermission } = require('../middleware/auth');
+const { checkCredits, deductCredits } = require('../middleware/credits');
 
 const router = express.Router();
 
@@ -29,17 +30,38 @@ router.route('/voices/:id')
 
 // Voice generation routes
 router.route('/generate')
-  .post(generateSpeech);
+  .post(
+    requirePermission('canUseVoiceGeneration'),
+    checkCredits(10), // 10 credits per voice generation
+    deductCredits(10),
+    generateSpeech
+  );
 
 router.route('/generate-blob')
-  .post(generateSpeechBlob);
+  .post(
+    requirePermission('canUseVoiceGeneration'),
+    checkCredits(10),
+    deductCredits(10),
+    generateSpeechBlob
+  );
 
 router.route('/story/:storyId')
-  .post(generateStoryVoice);
+  .post(
+    requirePermission('canUseVoiceGeneration'),
+    checkCredits(25), // 25 credits for story voice generation
+    deductCredits(25),
+    generateStoryVoice
+  );
 
 // Voice cloning routes
 router.route('/clone')
-  .post(upload.array('audioFiles', 5), cloneVoice);
+  .post(
+    requirePermission('canUseVoiceGeneration'),
+    checkCredits(100), // 100 credits for voice cloning
+    upload.array('audioFiles', 5),
+    deductCredits(100),
+    cloneVoice
+  );
 
 // User audio upload
 router.route('/upload')
