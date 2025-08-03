@@ -510,6 +510,7 @@ exports.createCheckoutSession = asyncHandler(async (req, res, next) => {
     console.log('Making request to:', fastspringUrl);
 
     // Updated FastSpring request format based on their API documentation
+    // Using the sessions API with proper purchaser account format
     const fastspringPayload = {
       products: [
         {
@@ -517,11 +518,16 @@ exports.createCheckoutSession = asyncHandler(async (req, res, next) => {
           quantity: 1
         }
       ],
-      customer: {
-        email: user.email,
-        first: user.firstName,
-        last: user.lastName
+      account: {
+        contact: {
+          email: user.email,
+          first: user.firstName,
+          last: user.lastName
+        }
       },
+      language: "en",
+      country: "US",
+      currency: "USD",
       tags: {
         userId: user._id.toString(),
         action: action,
