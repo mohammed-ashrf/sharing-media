@@ -46,6 +46,76 @@ app.set('trust proxy', 1);
 // Security middleware
 app.use(securityMiddleware);
 
+// Block access to sensitive files and directories
+app.use((req, res, next) => {
+  const sensitivePatterns = [
+    /^\/\.env/,           // .env files
+    /^\/\.git/,           // Git directory
+    /^\/node_modules/,    // Node modules
+    /^\/package\.json/,   // Package.json
+    /^\/package-lock\.json/, // Package-lock.json
+    /^\/yarn\.lock/,      // Yarn lock
+    /^\/\.npmrc/,         // NPM config
+    /^\/\.dockerignore/,  // Docker ignore
+    /^\/Dockerfile/,      // Dockerfile
+    /^\/docker-compose/,  // Docker compose files
+    /^\/\.github/,        // GitHub directory
+    /^\/config\//,        // Config directory
+    /^\/src\/config\//,   // Source config directory
+    /^\/logs\//,          // Logs directory
+    /^\/tmp\//,           // Temp directory
+    /^\/backup\//         // Backup directory
+  ];
+
+  const requestPath = req.path;
+  
+  // Check if the request matches any sensitive pattern
+  const isSensitive = sensitivePatterns.some(pattern => pattern.test(requestPath));
+  
+  if (isSensitive) {
+    const securityAlert = {
+      timestamp: new Date().toISOString(),
+      type: 'SENSITIVE_FILE_ACCESS_ATTEMPT',
+      path: requestPath,
+      ip: req.ip,
+      userAgent: req.get('User-Agent'),
+      headers: {
+        origin: req.get('Origin'),
+        referer: req.get('Referer'),
+        host: req.get('Host')
+      },
+      method: req.method
+    };
+    
+    console.log(`🚨 SECURITY ALERT: Blocked access to sensitive file`);
+    console.log(`   📁 Path: ${requestPath}`);
+    console.log(`   🌐 IP: ${req.ip}`);
+    console.log(`   🔍 User-Agent: ${req.get('User-Agent') || 'Not provided'}`);
+    console.log(`   📍 Origin: ${req.get('Origin') || 'Not provided'}`);
+    console.log(`   🔗 Referer: ${req.get('Referer') || 'Not provided'}`);
+    console.log(`   ⏰ Time: ${securityAlert.timestamp}`);
+    
+    // Log to file if in production
+    if (process.env.NODE_ENV === 'production') {
+      // In production, you might want to log this to a security log file
+      // or send to a security monitoring service
+      console.log('🔒 Security event logged for monitoring');
+    }
+    
+    return res.status(403).json({
+      success: false,
+      message: 'Access denied',
+      error: {
+        statusCode: 403,
+        isOperational: true,
+        status: 'fail'
+      }
+    });
+  }
+  
+  next();
+});
+
 // Development logging
 if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
@@ -185,6 +255,39 @@ app.use('/api/v1/voices', elevenLabsVoicesRoutes); // New ElevenLabs voices endp
 app.use('/api/v1/subscription', subscriptionRoutes); // Subscription management
 app.use('/api/v1/subuser', subuserAuthRoutes); // Subuser authentication
 app.use('/api/v1/subusers', subuserRoutes); // Subuser management
+
+// Security monitoring endpoint (admin only in production)
+app.get('/api/v1/security/status', (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    // In production, this should require admin authentication
+    return res.status(403).json({
+      success: false,
+      message: 'Access denied'
+    });
+  }
+  
+  res.status(200).json({
+    success: true,
+    message: 'Security status',
+    timestamp: new Date().toISOString(),
+    protectedPaths: [
+      '/.env*',
+      '/.git/*',
+      '/node_modules/*',
+      '/package.json',
+      '/config/*',
+      '/src/config/*',
+      '/logs/*'
+    ],
+    securityHeaders: {
+      helmet: true,
+      cors: true,
+      xss: true,
+      mongoSanitize: true,
+      hpp: true
+    }
+  });
+});
 
 // Welcome route
 app.get('/', (req, res) => {

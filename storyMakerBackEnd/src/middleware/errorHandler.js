@@ -72,7 +72,15 @@ const errorHandler = (err, req, res, next) => {
  * 404 handler for unknown routes
  */
 const notFound = (req, res, next) => {
-  const error = new AppError(`Route ${req.originalUrl} not found`, 404);
+  // Log the attempt for security monitoring
+  console.log(`🔍 404 Request: ${req.method} ${req.originalUrl} from IP: ${req.ip}`);
+  
+  // Don't reveal specific route information in production for security
+  const message = process.env.NODE_ENV === 'production' 
+    ? 'Resource not found'
+    : `Route ${req.originalUrl} not found`;
+    
+  const error = new AppError(message, 404);
   next(error);
 };
 
