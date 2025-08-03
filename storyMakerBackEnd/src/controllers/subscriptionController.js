@@ -554,31 +554,46 @@ exports.createCheckoutSession = asyncHandler(async (req, res, next) => {
         body: errorText
       });
       
-      // For development, return mock data if FastSpring fails
-      if (process.env.NODE_ENV === 'development') {
-        console.log('FastSpring API failed, falling back to development mode');
-        const checkoutData = {
-          sessionId: `dev_session_${Date.now()}`,
-          planId,
-          productId: selectedPlan.productId,
-          price: selectedPlan.price,
-          action,
-          fastspringUrl: `https://bigcommandllc.onfastspring.com/popup-bigcommand?product=${selectedPlan.productId}`,
-          user: {
-            id: user._id,
-            email: user.email,
-            firstName: user.firstName,
-            lastName: user.lastName
-          }
-        };
-
-        return res.status(200).json({
-          success: true,
-          data: checkoutData
-        });
-      }
+      // Enhanced error logging for debugging
+      console.error('FastSpring Request Details:');
+      console.error('  URL:', fastspringUrl);
+      console.error('  Payload:', JSON.stringify(fastspringPayload, null, 2));
+      console.error('  Response Status:', fastspringResponse.status);
+      console.error('  Response Body:', errorText);
       
-      throw new Error(`FastSpring API error: ${fastspringResponse.status} ${fastspringResponse.statusText} - ${errorText}`);
+      // For production, provide fallback with direct FastSpring URL
+      console.log('FastSpring API failed, providing fallback URL');
+      
+      // Use direct product URLs that work without session creation
+      const productUrls = {
+        'shortspie-standard': 'https://bigcommand.onfastspring.com/popup-bigcommand/shortspie-standard',
+        'shortspie-pro': 'https://bigcommand.onfastspring.com/popup-bigcommand/shortspie-pro', 
+        'shortspie-business-edition': 'https://bigcommand.onfastspring.com/popup-bigcommand/shortspie-business-edition',
+        'shortspie-business-unlimited': 'https://bigcommand.onfastspring.com/popup-bigcommand/shortspie-business-unlimited'
+      };
+      
+      const checkoutData = {
+        sessionId: `fallback_session_${Date.now()}`,
+        planId,
+        productId: selectedPlan.productId,
+        price: selectedPlan.price,
+        action,
+        fastspringUrl: productUrls[selectedPlan.productId] || `https://bigcommand.onfastspring.com/popup-bigcommand/${selectedPlan.productId}`,
+        fallback: true,
+        error: 'FastSpring API temporarily unavailable - using direct product URL',
+        user: {
+          id: user._id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName
+        }
+      };
+
+      return res.status(200).json({
+        success: true,
+        data: checkoutData,
+        warning: 'Using fallback checkout method due to FastSpring API issues'
+      });
     }
 
     const fastspringSession = await fastspringResponse.json();
