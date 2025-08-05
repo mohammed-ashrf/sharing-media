@@ -87,19 +87,30 @@ const register = asyncHandler(async (req, res, next) => {
     password
   });
 
-  // Generate email verification token
-  const verifyToken = user.createEmailVerificationToken();
-  await user.save();
+  // Check if email verification is required
+  const requireEmailVerification = process.env.REQUIRE_EMAIL_VERIFICATION !== 'false';
+  
+  if (requireEmailVerification) {
+    // Generate email verification token
+    const verifyToken = user.createEmailVerificationToken();
+    await user.save();
 
-  // Send verification email
-  try {
-    await emailService.sendVerificationEmail(user.email, user.firstName, verifyToken);
-  } catch (error) {
-    console.error('Error sending verification email:', error);
-    // Continue with registration even if email fails
+    // Send verification email
+    try {
+      await emailService.sendVerificationEmail(user.email, user.firstName, verifyToken);
+    } catch (error) {
+      console.error('Error sending verification email:', error);
+      // Continue with registration even if email fails
+    }
+
+    sendTokenResponse(user, 201, res, 'Registration successful. Please check your email to verify your account.');
+  } else {
+    // Skip email verification - mark user as verified immediately
+    user.isEmailVerified = true;
+    await user.save();
+    
+    sendTokenResponse(user, 201, res, 'Registration successful. You can now log in.');
   }
-
-  sendTokenResponse(user, 201, res, 'Registration successful. Please check your email to verify your account.');
 });
 
 /**
@@ -498,6 +509,22 @@ const refreshToken = asyncHandler(async (req, res, next) => {
   sendTokenResponse(user, 200, res, 'Token refreshed successfully');
 });
 
+/**
+ * @desc    Get email verification configuration
+ * @route   GET /api/v1/auth/verification-config
+ * @access  Public
+ */
+const getVerificationConfig = asyncHandler(async (req, res, next) => {
+  const requireEmailVerification = process.env.REQUIRE_EMAIL_VERIFICATION !== 'false';
+  
+  res.status(200).json({
+    success: true,
+    data: {
+      requireEmailVerification
+    }
+  });
+});
+
 module.exports = {
   register,
   login,
@@ -509,5 +536,6 @@ module.exports = {
   resetPassword,
   verifyEmail,
   resendVerification,
-  refreshToken
+  refreshToken,
+  getVerificationConfig
 };

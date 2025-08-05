@@ -10,7 +10,8 @@ const {
   resetPassword,
   verifyEmail,
   resendVerification,
-  refreshToken
+  refreshToken,
+  getVerificationConfig
 } = require('../controllers/authController');
 
 const { authenticate } = require('../middleware/auth');
@@ -32,6 +33,7 @@ router.post('/forgotpassword', validateForgotPassword, forgotPassword);
 router.put('/resetpassword/:resettoken', validateResetPassword, resetPassword);
 router.get('/verify/:token', verifyEmail);
 router.post('/refresh', refreshToken);
+router.get('/verification-config', getVerificationConfig);
 
 // Protected routes
 router.use(authenticate); // All routes after this middleware are protected

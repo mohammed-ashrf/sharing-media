@@ -151,6 +151,14 @@ const requireAdmin = (req, res, next) => {
  * Middleware to check if user account is verified
  */
 const requireVerified = (req, res, next) => {
+  // Check if email verification is required
+  const requireEmailVerification = process.env.REQUIRE_EMAIL_VERIFICATION !== 'false';
+  
+  if (!requireEmailVerification) {
+    // Skip verification check if email verification is disabled
+    return next();
+  }
+
   if (req.userType === 'subuser') {
     // Subusers inherit verification status from owner
     if (req.user.ownerId && req.user.ownerId.isEmailVerified) {
