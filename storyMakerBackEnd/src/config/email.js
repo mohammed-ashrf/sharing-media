@@ -81,6 +81,34 @@ class EmailService {
     }
   }
 
+  async sendVerificationEmail(email, firstName, verificationToken) {
+    const verificationUrl = process.env.NODE_ENV === 'production' 
+      ? `${process.env.FRONTEND_URL_PRODUCTION}/verify-email?token=${verificationToken}`
+      : `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
+
+    const mailOptions = {
+      from: `${process.env.APP_NAME} <${process.env.EMAIL_FROM}>`,
+      to: email,
+      subject: 'Verify Your Email - StoryMaker',
+      html: this.getVerificationTemplate(firstName, verificationUrl),
+      text: `Hi ${firstName},\n\nThank you for signing up for StoryMaker!\n\nPlease verify your email address by clicking the link below:\n${verificationUrl}\n\nThis link will expire in 24 hours.\n\nIf you didn't create this account, please ignore this email.\n\nBest regards,\nThe StoryMaker Team`
+    };
+
+    try {
+      const info = await this.transporter.sendMail(mailOptions);
+      console.log('✅ Verification email sent:', info.messageId);
+      
+      if (process.env.NODE_ENV === 'development') {
+        console.log('📧 Preview URL:', nodemailer.getTestMessageUrl(info));
+      }
+      
+      return { success: true, messageId: info.messageId };
+    } catch (error) {
+      console.error('❌ Error sending verification email:', error);
+      throw new Error('Failed to send verification email');
+    }
+  }
+
   getPasswordResetTemplate(firstName, resetUrl) {
     return `
       <!DOCTYPE html>
@@ -167,6 +195,50 @@ class EmailService {
           </div>
           <div class="footer">
             <p>Happy writing!<br>The StoryMaker Team</p>
+            <p>This is an automated email, please do not reply.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  }
+
+  getVerificationTemplate(firstName, verificationUrl) {
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Verify Your Email - StoryMaker</title>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
+          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 8px 8px; }
+          .button { display: inline-block; background: linear-gradient(135deg, #8b5cf6, #ec4899); color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; margin: 20px 0; }
+          .footer { text-align: center; padding: 20px; color: #666; font-size: 14px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>🖋️ StoryMaker</h1>
+            <h2>Verify Your Email Address</h2>
+          </div>
+          <div class="content">
+            <p>Hi ${firstName},</p>
+            <p>Thank you for signing up for StoryMaker! To complete your registration, please verify your email address by clicking the button below:</p>
+            <p style="text-align: center;">
+              <a href="${verificationUrl}" class="button">Verify Email Address</a>
+            </p>
+            <p><strong>Important:</strong> This link will expire in 24 hours for security reasons.</p>
+            <p>If you didn't create this account, please ignore this email.</p>
+            <p>If you're having trouble clicking the button, copy and paste this URL into your browser:</p>
+            <p style="word-break: break-all; color: #666;">${verificationUrl}</p>
+          </div>
+          <div class="footer">
+            <p>Best regards,<br>The StoryMaker Team</p>
             <p>This is an automated email, please do not reply.</p>
           </div>
         </div>
