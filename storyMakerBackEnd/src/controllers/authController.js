@@ -358,7 +358,37 @@ const verifyEmail = asyncHandler(async (req, res, next) => {
   });
 
   if (!user) {
-    return next(new AppError('Invalid or expired verification token', 400));
+    // Return HTML error page for invalid/expired token
+    return res.status(400).send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Verification Failed - StoryMaker</title>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; background: #f5f5f5; margin: 0; padding: 20px; }
+          .container { max-width: 500px; margin: 50px auto; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+          .header { background: linear-gradient(135deg, #dc2626, #ef4444); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
+          .content { padding: 30px; text-align: center; }
+          .icon { font-size: 48px; margin-bottom: 20px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <div class="icon">❌</div>
+            <h1>Verification Failed</h1>
+          </div>
+          <div class="content">
+            <h2>Invalid or Expired Token</h2>
+            <p>The verification link you clicked is either invalid or has expired.</p>
+            <p>Please open the StoryMaker app and request a new verification email.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
   }
 
   // Update user
@@ -367,10 +397,48 @@ const verifyEmail = asyncHandler(async (req, res, next) => {
   user.emailVerificationExpires = undefined;
   await user.save();
 
-  res.status(200).json({
-    success: true,
-    message: 'Email verified successfully'
-  });
+  // Return HTML success page
+  res.status(200).send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Email Verified - StoryMaker</title>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; background: #f5f5f5; margin: 0; padding: 20px; }
+        .container { max-width: 500px; margin: 50px auto; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
+        .content { padding: 30px; text-align: center; }
+        .icon { font-size: 48px; margin-bottom: 20px; }
+        .steps { text-align: left; background: #f8f9fa; padding: 20px; border-radius: 6px; margin: 20px 0; }
+        .step { margin: 10px 0; }
+        .app-name { color: #8b5cf6; font-weight: bold; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <div class="icon">✅</div>
+          <h1>Email Verified Successfully!</h1>
+        </div>
+        <div class="content">
+          <h2>Welcome to <span class="app-name">StoryMaker</span>!</h2>
+          <p>Your email address has been verified successfully.</p>
+          
+          <div class="steps">
+            <h3>🖥️ Next Steps:</h3>
+            <div class="step">1. Return to the StoryMaker desktop application</div>
+            <div class="step">2. Login with your email and password</div>
+            <div class="step">3. Start creating your amazing stories!</div>
+          </div>
+          
+          <p>You can now close this browser window and enjoy using StoryMaker.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `);
 });
 
 /**
