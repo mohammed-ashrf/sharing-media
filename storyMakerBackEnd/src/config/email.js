@@ -10,7 +10,7 @@ class EmailService {
     if (process.env.EMAIL_HOST && process.env.EMAIL_USERNAME && process.env.EMAIL_PASSWORD) {
       // Use real email configuration when available
       console.log('📧 Email service: Using configured SMTP server');
-      return nodemailer.createTransporter({
+      return nodemailer.createTransport({
         host: process.env.EMAIL_HOST,
         port: process.env.EMAIL_PORT || 587,
         secure: process.env.EMAIL_PORT == 465, // true for 465, false for other ports
