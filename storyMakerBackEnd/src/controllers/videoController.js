@@ -15,7 +15,7 @@ const generateVideoTimeline = asyncHandler(async (req, res, next) => {
     storyId,
     searchPhrases,
     duration,
-    orientation = 'landscape',
+    orientation = 'portrait',
     customPhrases = []
   } = req.body;
 
@@ -139,7 +139,7 @@ const getVideoTimeline = asyncHandler(async (req, res, next) => {
 const searchMediaPreview = asyncHandler(async (req, res, next) => {
   const {
     searchPhrases,
-    orientation = 'landscape',
+    orientation = 'portrait',
     maxResults = 20
   } = req.body;
 
