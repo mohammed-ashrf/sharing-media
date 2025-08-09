@@ -17,7 +17,8 @@ const {
   getMediaById,
   updateMedia,
   deleteMedia,
-  getProcessingStatus
+  getProcessingStatus,
+  proxyDownload
 } = require('../controllers/mediaController');
 
 const router = express.Router();
@@ -33,6 +34,10 @@ router.route('/search')
 // Save external media to library
 router.route('/external')
   .post(authenticate, validateSaveExternalMedia, saveExternalMedia);
+
+// Proxy download for external media (to avoid CORS issues)
+router.route('/proxy-download')
+  .get(authenticate, proxyDownload);
 
 // Upload media file(s)
 router.route('/upload')

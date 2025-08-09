@@ -2,6 +2,7 @@ const mediaService = require('../services/mediaService');
 const Media = require('../models/Media');
 const asyncHandler = require('../middleware/asyncHandler');
 const { AppError } = require('../middleware/errorHandler');
+const axios = require('axios');
 
 /**
  * Get user's media library
@@ -310,6 +311,88 @@ const getProcessingStatus = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * Proxy download for external media (to avoid CORS issues)
+ * @route GET /api/v1/media/proxy-download
+ * @access Private
+ */
+const proxyDownload = asyncHandler(async (req, res) => {
+  const { url } = req.query;
+  
+  if (!url) {
+    throw new AppError('URL parameter is required', 400);
+  }
+
+  // Validate URL is from allowed domains
+  const allowedDomains = [
+    'videos.pexels.com',
+    'pixabay.com',
+    'cdn.pixabay.com'
+  ];
+  
+  let urlObj;
+  try {
+    urlObj = new URL(url);
+  } catch (error) {
+    throw new AppError('Invalid URL format', 400);
+  }
+
+  const isAllowedDomain = allowedDomains.some(domain => 
+    urlObj.hostname === domain || urlObj.hostname.endsWith('.' + domain)
+  );
+
+  if (!isAllowedDomain) {
+    throw new AppError('URL domain not allowed', 403);
+  }
+
+  try {
+    // Make request to external URL
+    const response = await axios({
+      method: 'GET',
+      url: url,
+      responseType: 'stream',
+      headers: {
+        'User-Agent': 'StoryMaker/1.0',
+        'Accept': '*/*',
+        'Cache-Control': 'no-cache'
+      },
+      timeout: 30000, // 30 second timeout
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity
+    });
+
+    // Set appropriate headers
+    const contentType = response.headers['content-type'] || 'video/mp4';
+    const contentLength = response.headers['content-length'];
+
+    res.set({
+      'Content-Type': contentType,
+      'Cache-Control': 'public, max-age=3600', // Cache for 1 hour
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+    });
+
+    if (contentLength) {
+      res.set('Content-Length', contentLength);
+    }
+
+    // Stream the response
+    response.data.pipe(res);
+    
+  } catch (error) {
+    console.error('Proxy download error:', error);
+    if (error.code === 'ECONNRESET' || error.code === 'ECONNREFUSED') {
+      throw new AppError('Failed to download media - connection error', 502);
+    } else if (error.code === 'ECONNABORTED') {
+      throw new AppError('Download timeout', 504);
+    } else if (error.response) {
+      throw new AppError(`Failed to download media: ${error.response.status} ${error.response.statusText}`, error.response.status);
+    }
+    throw error;
+  }
+});
+
 module.exports = {
   getMediaLibrary,
   uploadMedia,
@@ -319,5 +402,6 @@ module.exports = {
   getMediaById,
   updateMedia,
   deleteMedia,
-  getProcessingStatus
+  getProcessingStatus,
+  proxyDownload
 };

@@ -188,17 +188,25 @@ class VideoService {
           headers: { 'Authorization': this.pexelsApiKey },
           params: {
             query: phrase,
-            per_page: Math.max(1, Math.ceil(perQuery / 2)), // Ensure at least 1
+            per_page: Math.max(10, perQuery), // Request more to filter for vertical
             orientation: this.mapOrientation(orientation),
             size: 'medium'
           }
         });
 
-        // Process videos
+        // Process videos with enhanced vertical filtering
         if (videoResponse.data.videos) {
           for (const video of videoResponse.data.videos) {
             const videoFile = video.video_files.find(f => f.quality === 'hd' || f.quality === 'sd') || video.video_files[0];
             if (videoFile) {
+              // Enhanced vertical video validation
+              const isVertical = this.isVideoVertical(videoFile.width, videoFile.height);
+              
+              // Only include videos that match our orientation requirements
+              if (orientation === 'portrait' && !isVertical) {
+                continue; // Skip non-vertical videos when requesting portrait
+              }
+              
               media.push({
                 id: video.id,
                 type: 'video',
@@ -208,11 +216,18 @@ class VideoService {
                 title: `Video ${video.id}`,
                 photographer: video.user?.name || 'Unknown',
                 tags: [phrase],
-                orientation: orientation,
+                orientation: isVertical ? 'portrait' : 'landscape',
                 quality: videoFile.quality,
                 width: videoFile.width,
-                height: videoFile.height
+                height: videoFile.height,
+                aspectRatio: videoFile.width / videoFile.height,
+                isVertical: isVertical
               });
+              
+              // Stop once we have enough videos for this phrase
+              if (media.filter(m => m.type === 'video' && m.tags.includes(phrase)).length >= Math.ceil(perQuery / 2)) {
+                break;
+              }
             }
           }
         }
@@ -230,6 +245,13 @@ class VideoService {
         // Process photos
         if (photoResponse.data.photos) {
           for (const photo of photoResponse.data.photos) {
+            const isVertical = this.isVideoVertical(photo.width, photo.height);
+            
+            // Only include photos that match our orientation requirements  
+            if (orientation === 'portrait' && !isVertical) {
+              continue;
+            }
+            
             media.push({
               id: photo.id,
               type: 'photo',
@@ -238,9 +260,11 @@ class VideoService {
               title: photo.alt || `Photo ${photo.id}`,
               photographer: photo.photographer || 'Unknown',
               tags: [phrase],
-              orientation: orientation,
+              orientation: isVertical ? 'portrait' : 'landscape',
               width: photo.width,
-              height: photo.height
+              height: photo.height,
+              aspectRatio: photo.width / photo.height,
+              isVertical: isVertical
             });
           }
         }
@@ -271,22 +295,32 @@ class VideoService {
 
     for (const phrase of searchPhrases) {
       try {
-        // Search for videos
+        // Search for videos with enhanced filtering
         const videoResponse = await axios.get('https://pixabay.com/api/videos/', {
           params: {
             key: this.pixabayApiKey,
             q: phrase,
-            per_page: Math.max(3, Math.ceil(perQuery / 2)), // Pixabay minimum is 3
+            per_page: Math.max(10, perQuery), // Request more to filter for vertical
             video_type: 'film',
             orientation: orientation === 'landscape' ? 'horizontal' : orientation === 'portrait' ? 'vertical' : 'all'
           }
         });
 
-        // Process videos
+        // Process videos with enhanced vertical filtering
         if (videoResponse.data.hits) {
           for (const video of videoResponse.data.hits) {
             const videoFile = video.videos?.medium || video.videos?.small || video.videos?.tiny;
             if (videoFile) {
+              // Get video dimensions if available
+              const width = video.webformatWidth || 1920;
+              const height = video.webformatHeight || 1080;
+              const isVertical = this.isVideoVertical(width, height);
+              
+              // Only include videos that match our orientation requirements
+              if (orientation === 'portrait' && !isVertical) {
+                continue; // Skip non-vertical videos when requesting portrait
+              }
+              
               media.push({
                 id: video.id,
                 type: 'video',
@@ -296,8 +330,17 @@ class VideoService {
                 title: video.tags || `Video ${video.id}`,
                 photographer: video.user || 'Unknown',
                 tags: video.tags ? video.tags.split(', ') : [phrase],
-                orientation: orientation
+                orientation: isVertical ? 'portrait' : 'landscape',
+                width: width,
+                height: height,
+                aspectRatio: width / height,
+                isVertical: isVertical
               });
+              
+              // Stop once we have enough videos for this phrase
+              if (media.filter(m => m.type === 'video' && m.tags.some(t => t.includes(phrase) || phrase.includes(t))).length >= Math.ceil(perQuery / 2)) {
+                break;
+              }
             }
           }
         }
@@ -317,6 +360,13 @@ class VideoService {
         // Process photos
         if (photoResponse.data.hits) {
           for (const photo of photoResponse.data.hits) {
+            const isVertical = this.isVideoVertical(photo.imageWidth, photo.imageHeight);
+            
+            // Only include photos that match our orientation requirements
+            if (orientation === 'portrait' && !isVertical) {
+              continue;
+            }
+            
             media.push({
               id: photo.id,
               type: 'photo',
@@ -325,9 +375,11 @@ class VideoService {
               title: photo.tags || `Photo ${photo.id}`,
               photographer: photo.user || 'Unknown',
               tags: photo.tags ? photo.tags.split(', ') : [phrase],
-              orientation: orientation,
+              orientation: isVertical ? 'portrait' : 'landscape',
               width: photo.imageWidth,
-              height: photo.imageHeight
+              height: photo.imageHeight,
+              aspectRatio: photo.imageWidth / photo.imageHeight,
+              isVertical: isVertical
             });
           }
         }
@@ -425,6 +477,37 @@ class VideoService {
       case 'square': return 'square';
       default: return 'landscape';
     }
+  }
+
+  /**
+   * Determine if video/image is vertical based on dimensions
+   * @param {number} width - Width in pixels
+   * @param {number} height - Height in pixels
+   * @returns {boolean} - True if vertical (height > width)
+   */
+  isVideoVertical(width, height) {
+    if (!width || !height) return false;
+    
+    const aspectRatio = width / height;
+    
+    // Consider vertical if height is significantly greater than width
+    // Use 0.8 threshold to account for slight variations (instead of strict 1.0)
+    return aspectRatio < 0.8;
+  }
+
+  /**
+   * Filter media items to only include vertical videos/images
+   * @param {Array} media - Array of media items
+   * @returns {Array} - Filtered array with only vertical media
+   */
+  filterVerticalMedia(media) {
+    return media.filter(item => {
+      if (item.width && item.height) {
+        return this.isVideoVertical(item.width, item.height);
+      }
+      // If dimensions not available, check orientation property
+      return item.orientation === 'portrait' || item.isVertical;
+    });
   }
 
   shuffleArray(array) {

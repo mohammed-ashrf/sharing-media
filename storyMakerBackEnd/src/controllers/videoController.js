@@ -151,26 +151,56 @@ const searchMediaPreview = asyncHandler(async (req, res, next) => {
   }
 
   try {
+    console.log(`🔍 Searching for ${orientation} media with phrases:`, searchPhrases);
+    
     const allMedia = [];
 
-    // Search Pexels (preview only)
+    // Search Pexels (preview only) with enhanced vertical filtering
     if (process.env.PEXELS_API_KEY) {
-      const pexelsMedia = await videoService.searchPexels(searchPhrases, maxResults / 2, orientation);
-      allMedia.push(...pexelsMedia);
+      console.log('🌐 Searching Pexels for vertical videos...');
+      const pexelsMedia = await videoService.searchPexels(searchPhrases, maxResults, orientation);
+      
+      // Additional filtering for vertical videos
+      const verticalPexelsMedia = orientation === 'portrait' 
+        ? videoService.filterVerticalMedia(pexelsMedia)
+        : pexelsMedia;
+        
+      console.log(`📱 Found ${verticalPexelsMedia.length} ${orientation} videos from Pexels`);
+      allMedia.push(...verticalPexelsMedia);
     }
 
-    // Search Pixabay (preview only)
+    // Search Pixabay (preview only) with enhanced vertical filtering
     if (process.env.PIXABAY_API_KEY) {
-      const pixabayMedia = await videoService.searchPixabay(searchPhrases, maxResults / 2, orientation);
-      allMedia.push(...pixabayMedia);
+      console.log('🌐 Searching Pixabay for vertical videos...');
+      const pixabayMedia = await videoService.searchPixabay(searchPhrases, maxResults, orientation);
+      
+      // Additional filtering for vertical videos
+      const verticalPixabayMedia = orientation === 'portrait'
+        ? videoService.filterVerticalMedia(pixabayMedia)
+        : pixabayMedia;
+        
+      console.log(`📱 Found ${verticalPixabayMedia.length} ${orientation} videos from Pixabay`);
+      allMedia.push(...verticalPixabayMedia);
     }
+
+    // Prioritize videos over photos for better auto-import results
+    const videos = allMedia.filter(media => media.type === 'video');
+    const photos = allMedia.filter(media => media.type === 'photo');
+    
+    // Combine with videos first, then photos if needed
+    const prioritizedMedia = [...videos, ...photos];
 
     // Limit results and add preview flag
-    const previewMedia = allMedia.slice(0, maxResults).map(media => ({
+    const previewMedia = prioritizedMedia.slice(0, maxResults).map(media => ({
       ...media,
       isPreview: true,
-      downloadUrl: null // Don't include download URLs in preview
+      downloadUrl: null, // Don't include download URLs in preview
+      // Add additional metadata for frontend filtering
+      aspectRatio: media.aspectRatio || (media.width && media.height ? media.width / media.height : null),
+      isVertical: media.isVertical !== undefined ? media.isVertical : (media.orientation === 'portrait')
     }));
+
+    console.log(`✅ Search completed: ${previewMedia.length} total media items (${previewMedia.filter(m => m.type === 'video').length} videos)`);
 
     res.status(200).json({
       success: true,
@@ -183,6 +213,12 @@ const searchMediaPreview = asyncHandler(async (req, res, next) => {
         sources: {
           pexels: previewMedia.filter(m => m.source === 'pexels').length,
           pixabay: previewMedia.filter(m => m.source === 'pixabay').length
+        },
+        breakdown: {
+          videos: previewMedia.filter(m => m.type === 'video').length,
+          photos: previewMedia.filter(m => m.type === 'photo').length,
+          vertical: previewMedia.filter(m => m.isVertical).length,
+          landscape: previewMedia.filter(m => !m.isVertical).length
         }
       }
     });

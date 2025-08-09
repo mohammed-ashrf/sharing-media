@@ -116,12 +116,6 @@ const generateSpeech = asyncHandler(async (req, res, next) => {
       return next(new ErrorResponse('Text is too long. Maximum 20,000 characters allowed.', 400));
     }
 
-
-    // Validate optimized script length for Murf AI
-    if (text.length > 2000) {
-      return next(new ErrorResponse('Optimized script is too long for Murf AI. Please use a shorter original text.', 400));
-    }
-
     // Validate and clean voice settings
     const validatedSettings = getVoiceService().validateVoiceSettings(voiceSettings || {});
 
@@ -342,8 +336,8 @@ const generateStoryVoice = asyncHandler(async (req, res, next) => {
     }
 
     // Validate content length
-    if (content.length > 10000) {
-      return next(new ErrorResponse('Story content is too long. Maximum 10,000 characters allowed.', 400));
+    if (content.length > 20000) {
+      return next(new ErrorResponse('Story content is too long. Maximum 20,000 characters allowed.', 400));
     }
 
 
