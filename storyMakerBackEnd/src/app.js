@@ -33,6 +33,7 @@ const elevenLabsVoicesRoutes = require('./routes/voices'); // New ElevenLabs voi
 const subscriptionRoutes = require('./routes/subscription'); // Subscription management
 const subuserAuthRoutes = require('./routes/subuserAuth'); // Subuser authentication
 const subuserRoutes = require('./routes/subusers'); // Subuser management
+const scriptImagesRoutes = require('./routes/scriptImages'); // Script-to-Images functionality
 
 // Create Express app
 const app = express();
@@ -255,6 +256,7 @@ app.use('/api/v1/voices', elevenLabsVoicesRoutes); // New ElevenLabs voices endp
 app.use('/api/v1/subscription', subscriptionRoutes); // Subscription management
 app.use('/api/v1/subuser', subuserAuthRoutes); // Subuser authentication
 app.use('/api/v1/subusers', subuserRoutes); // Subuser management
+app.use('/api/v1/script-images', scriptImagesRoutes); // Script-to-Images functionality
 
 // Security monitoring endpoint (admin only in production)
 app.get('/api/v1/security/status', (req, res) => {
