@@ -47,7 +47,7 @@ class ScriptToImagesService {
       console.log(`📊 Word count: ${wordCount}, Words per second: ${wps.toFixed(2)}`);
 
       // Step 2: Determine chunking parameters with 15-second minimum interval
-      // ✅ MAXIMUM 10 IMAGES PER PROJECT - Hard limit enforced
+      // ✅ MAXIMUM 12 IMAGES PER PROJECT - Hard limit enforced
       // Minimum: one image every 15 seconds for optimal viewing experience
       let targetImagesForDuration;
       
@@ -68,9 +68,9 @@ class ScriptToImagesService {
         targetImagesForDuration = Math.max(basedOnRate, basedOnInterval);
       }
       
-      // ✅ ENFORCE MAXIMUM 10 IMAGES PER PROJECT - Hard limit
-      targetImagesForDuration = Math.min(targetImagesForDuration, 10);
-      console.log(`🚫 Maximum images enforced: ${targetImagesForDuration} (capped at 10 per project)`);
+      // ✅ ENFORCE MAXIMUM 12 IMAGES PER PROJECT - Hard limit
+      targetImagesForDuration = Math.min(targetImagesForDuration, 12);
+      console.log(`🚫 Maximum images enforced: ${targetImagesForDuration} (capped at 12 per project)`);
       
       // Adjust duration to match effective duration for image timing
       const adjustedDuration = effectiveDuration;
@@ -275,7 +275,7 @@ class ScriptToImagesService {
       console.log(`📊 Word count: ${wordCount}, Words per second: ${wps.toFixed(2)}`);
 
       // Step 2: Determine chunking parameters with 15-second minimum interval
-      // ✅ MAXIMUM 10 IMAGES PER PROJECT - Hard limit enforced
+      // ✅ MAXIMUM 12 IMAGES PER PROJECT - Hard limit enforced
       // Minimum: one image every 15 seconds for optimal viewing experience
       let targetImagesForDuration;
       
@@ -296,9 +296,9 @@ class ScriptToImagesService {
         targetImagesForDuration = Math.max(basedOnRate, basedOnInterval);
       }
       
-      // ✅ ENFORCE MAXIMUM 10 IMAGES PER PROJECT - Hard limit
-      targetImagesForDuration = Math.min(targetImagesForDuration, 10);
-      console.log(`🚫 Maximum images enforced: ${targetImagesForDuration} (capped at 10 per project)`);
+      // ✅ ENFORCE MAXIMUM 12 IMAGES PER PROJECT - Hard limit
+      targetImagesForDuration = Math.min(targetImagesForDuration, 12);
+      console.log(`🚫 Maximum images enforced: ${targetImagesForDuration} (capped at 12 per project)`);
       
       // Adjust duration to match effective duration for image timing
       const adjustedDuration = effectiveDuration;
@@ -329,10 +329,10 @@ class ScriptToImagesService {
         }
       }
       
-      // ✅ Final check: Ensure no more than 10 scenes
-      const finalScenes = scenes.slice(0, 10);
-      if (scenes.length > 10) {
-        console.log(`🚫 Trimmed scenes from ${scenes.length} to 10 (project limit enforced)`);
+      // ✅ Final check: Ensure no more than 12 scenes
+      const finalScenes = scenes.slice(0, 12);
+      if (scenes.length > 12) {
+        console.log(`🚫 Trimmed scenes from ${scenes.length} to 12 (project limit enforced)`);
       }
 
       console.log(`🎬 Created ${scenes.length} scenes`);
@@ -656,24 +656,32 @@ Focus: Visual storytelling that directly illustrates the narrated content, cinem
    * @param {Object} params - Generation parameters
    * @returns {Object} Estimation data
    */
-  estimateGeneration({ script, duration, maxImagesPerMin = 4 }) {
+  estimateGeneration({ script, duration, maxImagesPerMin = 4, audioDuration }) {
     const words = script.trim().split(/\s+/).filter(word => word.length > 0);
     const wordCount = words.length;
     
+    // ✅ FIX: Use audio duration if provided (more accurate than script duration)
+    const effectiveDuration = audioDuration && audioDuration > 0 ? audioDuration : duration;
+    console.log(`⏱️ Estimation using effective duration: ${effectiveDuration}s (audio: ${audioDuration}s, script: ${duration}s)`);
+    
     // Use improved logic for estimation with 15-second minimum interval
     let targetImagesForDuration;
-    if (duration <= 60) {
+    if (effectiveDuration <= 60) {
       // Short videos: minimum 4 images, maximum 6 (every 10-15 seconds)
-      targetImagesForDuration = Math.max(4, Math.min(6, Math.ceil(duration / 15)));
-    } else if (duration <= 300) {
+      targetImagesForDuration = Math.max(4, Math.min(6, Math.ceil(effectiveDuration / 15)));
+    } else if (effectiveDuration <= 300) {
       // Medium videos (up to 5 minutes): one image every 15 seconds minimum
-      targetImagesForDuration = Math.ceil(duration / 15);
+      targetImagesForDuration = Math.ceil(effectiveDuration / 15);
     } else {
       // Long videos: respect maxImagesPerMin parameter but ensure 15s minimum
-      const basedOnRate = Math.ceil((duration / 60) * maxImagesPerMin);
-      const basedOnInterval = Math.ceil(duration / 15);
+      const basedOnRate = Math.ceil((effectiveDuration / 60) * maxImagesPerMin);
+      const basedOnInterval = Math.ceil(effectiveDuration / 15);
       targetImagesForDuration = Math.max(basedOnRate, basedOnInterval);
     }
+    
+    // ✅ ENFORCE MAXIMUM 12 IMAGES PER PROJECT - Hard limit for estimation
+    targetImagesForDuration = Math.min(targetImagesForDuration, 12);
+    console.log(`🚫 Estimation: Maximum images enforced: ${targetImagesForDuration} (capped at 12 per project)`);
     
     const chunkWords = Math.floor(wordCount / targetImagesForDuration);
     const expectedImages = Math.ceil(wordCount / chunkWords);
@@ -682,7 +690,7 @@ Focus: Visual storytelling that directly illustrates the narrated content, cinem
     const estimatedTimeSeconds = expectedImages * 4.5; // Average 4.5 seconds per image
     
     return {
-      expectedImages,
+      expectedImages: Math.min(expectedImages, 12), // ✅ Ensure estimation doesn't exceed 12
       estimatedProcessingTime: {
         seconds: Math.round(estimatedTimeSeconds),
         minutes: Math.round(estimatedTimeSeconds / 60 * 10) / 10,
@@ -690,8 +698,8 @@ Focus: Visual storytelling that directly illustrates the narrated content, cinem
       },
       chunking: {
         wordCount,
-        wordsPerSecond: Math.round((wordCount / duration) * 100) / 100,
-        chunkDuration: Math.round((duration / expectedImages) * 10) / 10,
+        wordsPerSecond: Math.round((wordCount / effectiveDuration) * 100) / 100, // ✅ Use effective duration
+        chunkDuration: Math.round((effectiveDuration / expectedImages) * 10) / 10, // ✅ Use effective duration
         wordsPerChunk: chunkWords
       }
     };

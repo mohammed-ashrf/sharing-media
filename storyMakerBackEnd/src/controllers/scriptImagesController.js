@@ -160,7 +160,8 @@ const generateScriptImagesStream = asyncHandler(async (req, res, next) => {
     const estimates = scriptToImagesService.estimateGeneration({
       script,
       duration,
-      maxImagesPerMin
+      maxImagesPerMin,
+      audioDuration // ✅ Pass audio duration for accurate estimation
     });
 
     console.log(`🎯 Estimated generation: ${estimates.expectedImages} images, ~${estimates.estimatedProcessingTime.formatted} processing time`);
@@ -265,13 +266,15 @@ const generateScriptImages = asyncHandler(async (req, res, next) => {
     script,
     duration,
     maxImagesPerMin = 4,
-    projectId
+    projectId,
+    audioDuration // ✅ Extract audio duration from request
   } = req.body;
 
   console.log('📝 Script-to-Images generation request:', {
     projectId,
     scriptLength: script?.length,
     duration,
+    audioDuration, // ✅ Log audio duration
     maxImagesPerMin,
     scriptPreview: script ? script.substring(0, 200) + '...' : 'missing'
   });
@@ -297,7 +300,8 @@ const generateScriptImages = asyncHandler(async (req, res, next) => {
     const estimates = scriptToImagesService.estimateGeneration({
       script,
       duration,
-      maxImagesPerMin
+      maxImagesPerMin,
+      audioDuration // ✅ Pass audio duration to estimation
     });
 
     console.log(`🎯 Estimated generation: ${estimates.expectedImages} images, ~${estimates.estimatedProcessingTime.formatted} processing time`);
@@ -379,7 +383,8 @@ const getGenerationEstimates = asyncHandler(async (req, res, next) => {
     const estimates = scriptToImagesService.estimateGeneration({
       script,
       duration,
-      maxImagesPerMin
+      maxImagesPerMin,
+      audioDuration // ✅ Pass audio duration for accurate estimation
     });
 
     res.status(200).json({
@@ -424,7 +429,8 @@ const validateScriptParams = asyncHandler(async (req, res, next) => {
       const estimates = scriptToImagesService.estimateGeneration({
         script,
         duration,
-        maxImagesPerMin
+        maxImagesPerMin,
+        audioDuration // ✅ Pass audio duration for accurate estimation
       });
 
       res.status(200).json({
