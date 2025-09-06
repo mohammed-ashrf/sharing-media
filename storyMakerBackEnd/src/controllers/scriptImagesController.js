@@ -138,7 +138,7 @@ const generateScriptImagesStream = asyncHandler(async (req, res, next) => {
   }
 
   try {
-    // Set up Server-Sent Events with production-ready headers
+    // Set up Server-Sent Events with production-ready headers and extended timeout
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -147,6 +147,32 @@ const generateScriptImagesStream = asyncHandler(async (req, res, next) => {
       'Access-Control-Allow-Headers': 'Cache-Control',
       'Access-Control-Allow-Credentials': 'true',
       'X-Accel-Buffering': 'no' // Disable nginx buffering for real-time streaming
+    });
+
+    // Set extended timeout for SSE connection (5 minutes)
+    res.setTimeout(300000, () => {
+      console.log('⏰ SSE connection timeout reached, closing connection');
+      res.write(`data: ${JSON.stringify({
+        type: 'error',
+        error: 'Connection timeout - image generation may still be processing in background'
+      })}\n\n`);
+      res.end();
+    });
+
+    // Keep connection alive with periodic heartbeat
+    const heartbeat = setInterval(() => {
+      if (!res.destroyed) {
+        res.write(`data: ${JSON.stringify({
+          type: 'heartbeat',
+          timestamp: Date.now()
+        })}\n\n`);
+      }
+    }, 30000); // Send heartbeat every 30 seconds
+
+    // Clean up heartbeat on connection close
+    res.on('close', () => {
+      clearInterval(heartbeat);
+      console.log('🔗 SSE connection closed');
     });
 
     // Send initial status
@@ -240,6 +266,8 @@ const generateScriptImagesStream = asyncHandler(async (req, res, next) => {
       }
     })}\n\n`);
 
+    // Clean up heartbeat before ending
+    clearInterval(heartbeat);
     res.end();
 
     console.log(`✅ Successfully streamed ${result.data.totalImages} images to frontend (${Math.round(result.data.metadata.totalSize / 1024)}KB total)`);
@@ -247,12 +275,19 @@ const generateScriptImagesStream = asyncHandler(async (req, res, next) => {
   } catch (error) {
     console.error('❌ Error streaming script images:', error);
     
-    res.write(`data: ${JSON.stringify({
-      type: 'error',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    })}\n\n`);
+    // Clean up heartbeat on error
+    if (typeof heartbeat !== 'undefined') {
+      clearInterval(heartbeat);
+    }
     
-    res.end();
+    if (!res.destroyed) {
+      res.write(`data: ${JSON.stringify({
+        type: 'error',
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      })}\n\n`);
+      
+      res.end();
+    }
   }
 });
 

@@ -15,7 +15,7 @@ class ScriptToImagesService {
    * Generate images for script with streaming support
    * @param {Object} params - Generation parameters
    * @param {string} params.script - Full text of the narration/audio
-   * @param {number} params.duration - Total length of the audio in seconds
+   * @param {numb      console.log(`⏰ Scene ${i + 1}: ${startTime}s - ${endTime}s (${duration}s) - "${scene.title || scene.description?.substring(0, 30) + '...' || 'Scene'}"`;r} params.duration - Total length of the audio in seconds
    * @param {number} params.maxImagesPerMin - Maximum images per minute (default: 4)
    * @param {string} params.projectId - Unique project identifier
    * @param {Function} params.onImageGenerated - Callback for each generated image
@@ -39,93 +39,68 @@ class ScriptToImagesService {
       console.log(`⏱️ Duration: ${duration} seconds`);
       console.log(`🖼️ Max images per minute: ${maxImagesPerMin}`);
 
-      // Step 1: Calculate word statistics
-      const words = script.trim().split(/\s+/).filter(word => word.length > 0);
-      const wordCount = words.length;
-      const wps = wordCount / duration; // words per second
-
-      console.log(`📊 Word count: ${wordCount}, Words per second: ${wps.toFixed(2)}`);
-
-      // Step 2: Determine chunking parameters with 15-second minimum interval
-      // ✅ MAXIMUM 12 IMAGES PER PROJECT - Hard limit enforced
-      // Minimum: one image every 15 seconds for optimal viewing experience
-      let targetImagesForDuration;
-      
       // Use audio duration if provided (more accurate than script duration)
       const effectiveDuration = audioDuration && audioDuration > 0 ? Math.min(audioDuration, duration) : duration;
       console.log(`⏱️ Using effective duration: ${effectiveDuration}s (audio: ${audioDuration}s, script: ${duration}s)`);
-      
-      if (effectiveDuration <= 60) {
-        // Short videos: minimum 4 images, maximum 6 (every 10-15 seconds)
-        targetImagesForDuration = Math.max(4, Math.min(6, Math.ceil(effectiveDuration / 15)));
-      } else if (effectiveDuration <= 300) {
-        // Medium videos (up to 5 minutes): one image every 15 seconds minimum
-        targetImagesForDuration = Math.ceil(effectiveDuration / 15);
-      } else {
-        // Long videos: respect maxImagesPerMin parameter but ensure 15s minimum
-        const basedOnRate = Math.ceil((effectiveDuration / 60) * maxImagesPerMin);
-        const basedOnInterval = Math.ceil(effectiveDuration / 15);
-        targetImagesForDuration = Math.max(basedOnRate, basedOnInterval);
-      }
-      
-      // ✅ ENFORCE MAXIMUM 12 IMAGES PER PROJECT - Hard limit
-      targetImagesForDuration = Math.min(targetImagesForDuration, 12);
-      console.log(`🚫 Maximum images enforced: ${targetImagesForDuration} (capped at 12 per project)`);
-      
-      // Adjust duration to match effective duration for image timing
-      const adjustedDuration = effectiveDuration;
-      
-      // Calculate words per chunk based on target image count
-      const chunkWords = Math.floor(wordCount / targetImagesForDuration);
-      const actualImagesCount = Math.ceil(wordCount / chunkWords);
-      const chunkSec = adjustedDuration / actualImagesCount;
 
-      console.log(`⏰ Target images: ${targetImagesForDuration}, Actual: ${actualImagesCount}`);
-      console.log(`⏰ Chunk duration: ${chunkSec.toFixed(1)} seconds (every ${chunkSec.toFixed(1)}s)`);
-      console.log(`📝 Words per chunk: ${chunkWords}`);
+      // Step 1: Calculate target number of scenes based on duration and max images per minute
+      const maxTotalImages = Math.floor((effectiveDuration / 60) * maxImagesPerMin);
+      const targetScenes = Math.min(maxTotalImages, 12); // Hard cap at 12 images
+      
+      console.log(`🎯 Target scenes: ${targetScenes} (${maxImagesPerMin} images/min for ${effectiveDuration}s)`);
 
-      // Step 3: Split script into scenes with proper timing
-      const scenes = [];
-      for (let i = 0; i < words.length; i += chunkWords) {
-        const chunk = words.slice(i, i + chunkWords).join(' ');
-        const sceneIndex = Math.floor(i / chunkWords);
-        const startTime = parseFloat((sceneIndex * chunkSec).toFixed(1));
-        
-        // ✅ Ensure scene doesn't exceed effective duration
-        if (startTime < adjustedDuration) {
-          scenes.push({
-            start: startTime,
-            description: chunk,
-            prompt: this.createImagePrompt(chunk, chunkSec)
-          });
-        }
+      // Step 2: Generate scene descriptions using OpenAI
+      if (onProgress) {
+        onProgress({
+          current: 0,
+          total: targetScenes + 1,
+          stage: 'analyzing',
+          message: 'Analyzing script and generating scene descriptions...',
+          timestamp: 0
+        });
       }
 
-      console.log(`🎬 Created ${scenes.length} scenes (max 10 per project, within ${adjustedDuration}s)`);
+      console.log(`🤖 Generating scene descriptions for ${targetScenes} scenes...`);
+      const sceneDescriptions = await this.generateSceneDescriptions(script, effectiveDuration, targetScenes);
       
-      // ✅ Final check: Ensure no more than 10 scenes
-      const finalScenes = scenes.slice(0, 10);
-      if (scenes.length > 10) {
-        console.log(`🚫 Trimmed scenes from ${scenes.length} to 10 (project limit enforced)`);
+      if (!sceneDescriptions || !Array.isArray(sceneDescriptions.scenes)) {
+        throw new Error('Failed to generate scene descriptions');
       }
+
+      console.log(`📋 Generated ${sceneDescriptions.scenes.length} scene descriptions`);
+      
+      // Step 3: Validate and adjust scene timing
+      const validationResult = this.validateSceneTiming(sceneDescriptions.scenes, effectiveDuration);
+      const validatedScenes = validationResult.scenes;
+      
+      if (validatedScenes.length === 0) {
+        throw new Error(`Scene timing validation failed. Generated ${sceneDescriptions.scenes.length} scenes but none are valid for ${effectiveDuration}s duration. Check scene durations and timing.`);
+      }
+      
+      // Log validation results but don't fail if we have valid scenes
+      if (!validationResult.valid) {
+        console.log(`⚠️ Scene timing validation notice: ${sceneDescriptions.scenes.length} scenes generated, ${validatedScenes.length} are valid within ${effectiveDuration}s duration`);
+      }
+      
+      console.log(`✅ Validated ${validatedScenes.length} scenes with proper timing (avg: ${validationResult.averageSceneDuration.toFixed(1)}s per scene)`)
 
       // Step 4: Generate images with streaming
       const results = [];
       const failedImages = [];
       let totalSize = 0;
 
-      for (let i = 0; i < finalScenes.length; i++) {
-        const scene = finalScenes[i];
-        console.log(`🎨 Generating image ${i + 1}/${finalScenes.length} for timestamp ${scene.start}s`);
+      for (let i = 0; i < validatedScenes.length; i++) {
+        const scene = validatedScenes[i];
+        console.log(`🎨 Generating image ${i + 1}/${validatedScenes.length} for timestamp ${scene.startTime}s`);
 
         // Send progress update
         if (onProgress) {
           onProgress({
             current: i + 1,
-            total: finalScenes.length,
+            total: validatedScenes.length,
             stage: 'generating',
-            message: `Generating image ${i + 1}/${finalScenes.length}...`,
-            timestamp: scene.start
+            message: `Generating image ${i + 1}/${validatedScenes.length}...`,
+            timestamp: scene.startTime
           });
         }
 
@@ -141,18 +116,23 @@ class ScriptToImagesService {
 
           // Create image data object
           const b64Data = image.data[0].b64_json;
-          const filename = `${Math.floor(scene.start)}.png`;
+          const filename = `${Math.floor(scene.startTime)}.png`;
           const imageSize = Math.round((b64Data.length * 3) / 4); // Approximate size in bytes
 
           const imageData = {
             id: `${projectId}_${filename}`,
-            timestamp: scene.start,
+            timestamp: scene.startTime,
             filename: filename,
             base64Data: b64Data, // Base64 image data for frontend
             prompt: scene.prompt,
             description: scene.description,
             size: imageSize,
-            mimeType: 'image/png'
+            mimeType: 'image/png',
+            // Include scene timing data for frontend
+            sceneIndex: scene.scene,
+            startTime: scene.startTime,
+            endTime: scene.endTime,
+            duration: scene.duration
           };
 
           results.push(imageData);
@@ -164,22 +144,22 @@ class ScriptToImagesService {
           if (onImageGenerated) {
             onImageGenerated(imageData, {
               current: i + 1,
-              total: finalScenes.length,
+              total: validatedScenes.length,
               completed: i + 1,
-              remaining: finalScenes.length - (i + 1)
+              remaining: validatedScenes.length - (i + 1)
             });
           }
 
           // Add delay to respect API rate limits and improve performance
-          if (i < finalScenes.length - 1) {
+          if (i < validatedScenes.length - 1) {
             await this.delay(800); // 800ms delay between requests for better performance
           }
 
         } catch (imageError) {
-          console.error(`❌ Error generating image for timestamp ${scene.start}:`, imageError);
+          console.error(`❌ Error generating image for timestamp ${scene.startTime}:`, imageError);
           
           const errorData = {
-            timestamp: scene.start,
+            timestamp: scene.startTime,
             error: imageError.message,
             prompt: scene.prompt,
             description: scene.description
@@ -214,10 +194,6 @@ class ScriptToImagesService {
         duration,
         audioDuration, // ✅ Include in response
         maxImagesPerMin,
-        wordCount,
-        wordsPerSecond: wps,
-        chunkDuration: chunkSec,
-        wordsPerChunk: chunkWords,
         totalImages: filteredResults.length, // ✅ Use filtered count
         originalImages: results.length, // ✅ Include original count
         removedByAudioDuration: results.length - filteredResults.length, // ✅ Track removed images
@@ -225,10 +201,13 @@ class ScriptToImagesService {
         generatedAt: new Date().toISOString(),
         images: filteredResults, // ✅ Return only filtered images
         failedAttempts: failedImages,
+        sceneDescriptions: sceneDescriptions, // ✅ Include original scene descriptions
         metadata: {
           totalSize: filteredResults.reduce((sum, img) => sum + img.size, 0), // ✅ Recalculate for filtered images
           averageImageSize: filteredResults.length > 0 ? Math.round(filteredResults.reduce((sum, img) => sum + img.size, 0) / filteredResults.length) : 0,
-          estimatedDownloadTime: this.estimateDownloadTime(filteredResults)
+          estimatedDownloadTime: this.estimateDownloadTime(filteredResults),
+          scenesGenerated: validatedScenes.length,
+          averageSceneDuration: validatedScenes.length > 0 ? Math.round((effectiveDuration / validatedScenes.length) * 10) / 10 : 0
         }
       };
 
@@ -426,10 +405,184 @@ class ScriptToImagesService {
   }
 
   /**
-   * Create an optimized image generation prompt
-   * @param {string} chunk - Text chunk to visualize
-   * @returns {string} Optimized prompt for image generation
+   * Generate scene descriptions using OpenAI
+   * @param {string} script - The full script text
+   * @param {number} duration - Duration in seconds
+   * @param {number} targetScenes - Target number of scenes
+   * @returns {Object} Scene descriptions with timing
    */
+  async generateSceneDescriptions(script, duration, targetScenes) {
+    try {
+      const durationMinutes = Math.round(duration / 60 * 10) / 10;
+      
+      const prompt = `This is my script for a ${durationMinutes}-minute video. 
+Study the script then break it for me into ${targetScenes} scenes and describe the images to generate for each scene. 
+The data you give me will be fed to another AI image generator. 
+Produce the image prompt in JSON format. 
+The json prompt should be detailed enough in order to generate images that clearly captures the scene. 
+Each prompt must include lighting details, scene information, camera & lens quality, camera angle, photo quality and also negative information to avoid. 
+Don't say anything else or give advise, just produce the json prompt only. 
+
+Format the response as a JSON object with this exact structure:
+{
+  "scenes": [
+    {
+      "scene": 1,
+      "title": "Scene Title (2-5 words)",
+      "description": "Brief description of what happens in this scene (1-2 sentences)",
+      "imagePrompt": "Detailed prompt for image generation including: main scene description, professional lighting details (dramatic/natural/soft), camera specifications (professional camera, high resolution, cinematic), visual style (photorealistic, cinematic, vibrant colors), composition details (vertical format, 9:16 aspect ratio), quality specifications (4K, sharp focus, detailed). Negative prompt: avoid blurry images, low quality, distorted faces, text overlays, logos.",
+      "duration": 15.0,
+      "startTime": 0.0
+    }
+  ]
+}
+
+IMPORTANT: Only respond with the JSON object. No additional text or explanations.
+
+Here's the video script below:
+${script}`;
+
+      console.log(`🤖 Requesting scene descriptions from OpenAI for ${targetScenes} scenes...`);
+      
+      const response = await this.openai.chat.completions.create({
+        model: "gpt-4",
+        messages: [
+          {
+            role: "system",
+            content: "You are an expert video production assistant. Generate detailed scene breakdowns with precise timing and professional image generation prompts. Always respond with valid JSON only."
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        temperature: 0.7,
+        max_tokens: 3000
+      });
+
+      const responseText = response.choices[0].message.content.trim();
+      console.log(`📋 OpenAI response length: ${responseText.length} characters`);
+      
+      // Parse the JSON response
+      let sceneData;
+      try {
+        // Clean the response to ensure it's valid JSON
+        const cleanedResponse = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        sceneData = JSON.parse(cleanedResponse);
+      } catch (parseError) {
+        console.error('❌ Failed to parse OpenAI response as JSON:', parseError);
+        console.log('📝 Raw response:', responseText.substring(0, 500) + '...');
+        throw new Error('Invalid JSON response from scene generation');
+      }
+
+      if (!sceneData.scenes || !Array.isArray(sceneData.scenes)) {
+        throw new Error('Invalid scene data structure received');
+      }
+
+      console.log(`✅ Successfully parsed ${sceneData.scenes.length} scenes from OpenAI`);
+      return sceneData;
+
+    } catch (error) {
+      console.error('❌ Error generating scene descriptions:', error);
+      throw new Error(`Failed to generate scene descriptions: ${error.message}`);
+    }
+  }
+
+  /**
+   * Validate and adjust scene timing to ensure they fit within duration
+   * @param {Array} scenes - Array of scene objects
+   * @param {number} totalDuration - Total duration in seconds
+   * @returns {Array} Validated scenes with proper timing
+   */
+  validateSceneTiming(scenes, totalDuration) {
+    const validatedScenes = [];
+    const sceneDuration = totalDuration / scenes.length;
+    let totalCalculatedDuration = 0;
+    
+    for (let i = 0; i < scenes.length; i++) {
+      const scene = scenes[i];
+      const startTime = parseFloat((i * sceneDuration).toFixed(1));
+      const endTime = parseFloat(Math.min((i + 1) * sceneDuration, totalDuration).toFixed(1));
+      const duration = parseFloat((endTime - startTime).toFixed(1));
+      
+      // Skip scenes that would be too short or exceed duration
+      if (duration < 5 || startTime >= totalDuration) {
+        console.log(`⚠️ Skipping scene ${i + 1}: duration too short (${duration}s) or exceeds total duration`);
+        continue;
+      }
+      
+      validatedScenes.push({
+        ...scene,
+        startTime,
+        endTime,
+        duration,
+        sceneIndex: i + 1,
+        prompt: this.sanitizePromptForContentPolicy(scene.imagePrompt || scene.prompt || this.createImagePromptFromDescription(scene.description || scene.title)),
+        scene: i + 1 // Add scene number for compatibility
+      });
+      
+      totalCalculatedDuration += duration;
+      console.log(`⏰ Scene ${i + 1}: ${startTime}s - ${endTime}s (${duration}s) - "${scene.title || scene.image_prompt?.substring(0, 30) + '...' || 'Scene'}"`);
+    }
+    
+    // Return validation result object
+    return {
+      valid: validatedScenes.length > 0 && totalCalculatedDuration <= totalDuration,
+      scenes: validatedScenes,
+      sceneCount: validatedScenes.length,
+      totalDuration: totalCalculatedDuration,
+      withinAudioDuration: totalCalculatedDuration <= totalDuration,
+      averageSceneDuration: validatedScenes.length > 0 ? totalCalculatedDuration / validatedScenes.length : 0
+    };
+  }
+
+  /**
+   * Create comprehensive image prompt from scene description
+   * @param {string} description - Scene description
+   * @returns {string} Detailed image prompt
+   */
+  createImagePromptFromDescription(description) {
+    if (!description) return 'A high-quality, cinematic scene with professional lighting and composition';
+    
+    // Clean description to avoid content policy violations
+    const cleanDescription = this.sanitizePromptForContentPolicy(description);
+    
+    return `${cleanDescription}. Professional cinematography, high-quality lighting, detailed composition, 
+photorealistic style, cinematic depth of field, vibrant colors, sharp focus, high resolution, 
+suitable for vertical video format (9:16 aspect ratio), visually engaging, movie-like quality.`;
+  }
+
+  /**
+   * Sanitize prompt content to avoid OpenAI content policy violations
+   * @param {string} prompt - The original prompt
+   * @returns {string} Sanitized prompt
+   */
+  sanitizePromptForContentPolicy(prompt) {
+    if (!prompt) return prompt;
+    
+    // Remove or replace potentially problematic words/phrases
+    const sanitizedPrompt = prompt
+      .toLowerCase()
+      // Family/relationship conflicts - make more neutral
+      .replace(/family.*conflict/gi, 'personal relationship challenges')
+      .replace(/family.*betrayal/gi, 'breach of trust situation')
+      .replace(/dad.*lying/gi, 'father figure in contemplation')
+      .replace(/father.*hiding/gi, 'parent in serious conversation')
+      .replace(/stealing|theft|fraud/gi, 'financial difficulty')
+      .replace(/anger|rage|fury/gi, 'serious concern')
+      .replace(/dark secret/gi, 'hidden challenge')
+      .replace(/ruin.*family/gi, 'family facing challenges')
+      // Violence or negative emotion words
+      .replace(/destroy|devastate|crush/gi, 'impact seriously')
+      .replace(/betray|deceive/gi, 'disappoint')
+      .replace(/hate|hatred/gi, 'strong disagreement')
+      // Make descriptions more abstract and artistic
+      .replace(/specific.*details/gi, 'symbolic representation')
+      .replace(/realistic.*depiction/gi, 'artistic interpretation');
+    
+    return sanitizedPrompt.charAt(0).toUpperCase() + sanitizedPrompt.slice(1);
+  }
+
   createImagePrompt(chunk) {
     // Clean up the chunk text
     const cleanChunk = chunk.trim();
@@ -538,7 +691,7 @@ Focus on visual storytelling, avoid text overlays, center subject for vertical v
     
     // Build prompt that directly represents the script content
     const prompt = `Create a ${styleIntensity} visual representation of: "${cleanChunk}". 
-${visualContext}
+${visualContext.fullDescription}
 Style: High-quality, professional photography, dramatic lighting, rich colors.
 Format: Vertical 9:16 aspect ratio, mobile-optimized framing, no text overlays.
 Focus: Visual storytelling that directly illustrates the narrated content, cinematic composition suitable for video backgrounds.`;
@@ -648,7 +801,56 @@ Focus: Visual storytelling that directly illustrates the narrated content, cinem
     contextParts.push(mood);
     if (sceneContext.length > 0) contextParts.push(sceneContext[0]);
     
-    return `Scene: ${contextParts.join(', ')}.`;
+    // Extract visual keywords for detailed analysis
+    const visualKeywords = [];
+    
+    // Add setting keywords
+    if (setting) visualKeywords.push(setting.split(' ')[0]);
+    
+    // Add lighting keywords
+    if (lighting.includes('golden')) visualKeywords.push('golden');
+    if (lighting.includes('bright')) visualKeywords.push('bright');
+    if (lighting.includes('dramatic')) visualKeywords.push('dramatic');
+    
+    // Add mood keywords
+    if (mood.includes('stormy')) visualKeywords.push('stormy');
+    if (mood.includes('cheerful')) visualKeywords.push('cheerful');
+    if (mood.includes('winter')) visualKeywords.push('winter');
+    
+    // Add specific scene elements
+    const sceneElements = lowerChunk.match(/\b(car|building|tree|mountain|ocean|river|bridge|castle|tower)\b/g) || [];
+    visualKeywords.push(...sceneElements);
+    
+    // Style hints based on content
+    const styleHints = [];
+    if (lowerChunk.includes('ancient') || lowerChunk.includes('medieval') || lowerChunk.includes('historical')) {
+      styleHints.push('historical');
+    }
+    if (lowerChunk.includes('modern') || lowerChunk.includes('contemporary') || lowerChunk.includes('today')) {
+      styleHints.push('contemporary');
+    }
+    if (lowerChunk.includes('fantasy') || lowerChunk.includes('magical') || lowerChunk.includes('mystical')) {
+      styleHints.push('fantasy');
+    }
+    if (lowerChunk.includes('realistic') || lowerChunk.includes('real') || lowerChunk.includes('actual')) {
+      styleHints.push('photorealistic');
+    }
+    
+    // Default style hints if none found
+    if (styleHints.length === 0) {
+      styleHints.push('cinematic', 'detailed');
+    }
+    
+    return {
+      fullDescription: `Scene: ${contextParts.join(', ')}.`,
+      visualKeywords: visualKeywords.filter((keyword, index, arr) => arr.indexOf(keyword) === index), // Remove duplicates
+      setting: setting || 'general scene',
+      lighting: lighting,
+      mood: mood,
+      characters: characters || 'no specific characters',
+      styleHints: styleHints,
+      sceneContext: sceneContext
+    };
   }
 
   /**
@@ -657,50 +859,40 @@ Focus: Visual storytelling that directly illustrates the narrated content, cinem
    * @returns {Object} Estimation data
    */
   estimateGeneration({ script, duration, maxImagesPerMin = 4, audioDuration }) {
-    const words = script.trim().split(/\s+/).filter(word => word.length > 0);
-    const wordCount = words.length;
-    
     // ✅ FIX: Use audio duration if provided (more accurate than script duration)
     const effectiveDuration = audioDuration && audioDuration > 0 ? audioDuration : duration;
     console.log(`⏱️ Estimation using effective duration: ${effectiveDuration}s (audio: ${audioDuration}s, script: ${duration}s)`);
     
-    // Use improved logic for estimation with 15-second minimum interval
-    let targetImagesForDuration;
-    if (effectiveDuration <= 60) {
-      // Short videos: minimum 4 images, maximum 6 (every 10-15 seconds)
-      targetImagesForDuration = Math.max(4, Math.min(6, Math.ceil(effectiveDuration / 15)));
-    } else if (effectiveDuration <= 300) {
-      // Medium videos (up to 5 minutes): one image every 15 seconds minimum
-      targetImagesForDuration = Math.ceil(effectiveDuration / 15);
-    } else {
-      // Long videos: respect maxImagesPerMin parameter but ensure 15s minimum
-      const basedOnRate = Math.ceil((effectiveDuration / 60) * maxImagesPerMin);
-      const basedOnInterval = Math.ceil(effectiveDuration / 15);
-      targetImagesForDuration = Math.max(basedOnRate, basedOnInterval);
-    }
+    // Calculate target number of scenes based on maxImagesPerMin constraint
+    const maxTotalImages = Math.floor((effectiveDuration / 60) * maxImagesPerMin);
+    const targetScenes = Math.min(maxTotalImages, 12); // Hard cap at 12 images
     
-    // ✅ ENFORCE MAXIMUM 12 IMAGES PER PROJECT - Hard limit for estimation
-    targetImagesForDuration = Math.min(targetImagesForDuration, 12);
-    console.log(`🚫 Estimation: Maximum images enforced: ${targetImagesForDuration} (capped at 12 per project)`);
+    console.log(`🎯 Estimation target scenes: ${targetScenes} (${maxImagesPerMin} images/min for ${effectiveDuration}s, capped at 12)`);
     
-    const chunkWords = Math.floor(wordCount / targetImagesForDuration);
-    const expectedImages = Math.ceil(wordCount / chunkWords);
+    const averageSceneDuration = targetScenes > 0 ? Math.round((effectiveDuration / targetScenes) * 10) / 10 : 0;
     
-    // Estimate processing time (800ms delay + ~3-5s per image generation)
-    const estimatedTimeSeconds = expectedImages * 4.5; // Average 4.5 seconds per image
+    // Estimate processing time (scene generation + image generation)
+    const sceneGenerationTime = 8; // ~8 seconds for OpenAI scene analysis
+    const imageGenerationTime = targetScenes * 4.5; // Average 4.5 seconds per image
+    const estimatedTimeSeconds = sceneGenerationTime + imageGenerationTime;
     
     return {
-      expectedImages: Math.min(expectedImages, 12), // ✅ Ensure estimation doesn't exceed 12
+      expectedImages: targetScenes,
       estimatedProcessingTime: {
         seconds: Math.round(estimatedTimeSeconds),
         minutes: Math.round(estimatedTimeSeconds / 60 * 10) / 10,
         formatted: `${Math.floor(estimatedTimeSeconds / 60)}:${String(Math.round(estimatedTimeSeconds % 60)).padStart(2, '0')}`
       },
-      chunking: {
-        wordCount,
-        wordsPerSecond: Math.round((wordCount / effectiveDuration) * 100) / 100, // ✅ Use effective duration
-        chunkDuration: Math.round((effectiveDuration / expectedImages) * 10) / 10, // ✅ Use effective duration
-        wordsPerChunk: chunkWords
+      sceneTiming: {
+        totalScenes: targetScenes,
+        averageSceneDuration: averageSceneDuration,
+        effectiveDuration: effectiveDuration,
+        maxImagesPerMin: maxImagesPerMin
+      },
+      breakdown: {
+        sceneGeneration: `${sceneGenerationTime}s`,
+        imageGeneration: `${Math.round(imageGenerationTime)}s`,
+        total: `${Math.round(estimatedTimeSeconds)}s`
       }
     };
   }
