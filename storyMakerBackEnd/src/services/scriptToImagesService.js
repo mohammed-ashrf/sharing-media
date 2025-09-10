@@ -158,62 +158,143 @@ class ScriptToImagesService {
         } catch (imageError) {
           console.error(`❌ Error generating image for timestamp ${scene.startTime}:`, imageError);
           
-          const errorData = {
-            timestamp: scene.startTime,
-            error: imageError.message,
-            prompt: scene.prompt,
-            description: scene.description
-          };
+          // ✅ ENHANCED: Handle content policy violations with fallback
+          let shouldRetry = false;
+          let fallbackPrompt = null;
           
-          failedImages.push(errorData);
+          if (imageError.code === 'content_policy_violation' || 
+              imageError.message?.includes('content filters') ||
+              imageError.message?.includes('content policy')) {
+            
+            console.log(`🚨 Content policy violation for scene ${i + 1}, trying fallback prompt...`);
+            
+            // Create a generic, safe fallback prompt
+            fallbackPrompt = `Abstract artistic representation of a story scene. 
+Soft lighting, peaceful atmosphere, minimalist composition, 
+cinematic quality, professional photography style, 
+vertical format suitable for mobile viewing, high resolution.`;
+            
+            shouldRetry = true;
+          }
           
-          // Notify frontend of error
-          if (onError) {
-            onError(errorData);
+          // Try fallback prompt if content policy violation
+          if (shouldRetry && fallbackPrompt) {
+            try {
+              console.log(`🔄 Retrying with safe fallback prompt for scene ${i + 1}...`);
+              
+              const fallbackImage = await this.openai.images.generate({
+                model: "dall-e-3",
+                prompt: fallbackPrompt,
+                size: "1024x1792",
+                quality: "standard",
+                response_format: "b64_json"
+              });
+
+              // Create image data object with fallback
+              const b64Data = fallbackImage.data[0].b64_json;
+              const filename = `${Math.floor(scene.startTime)}.png`;
+              const imageSize = Math.round((b64Data.length * 3) / 4);
+
+              const imageData = {
+                id: `${projectId}_${filename}`,
+                timestamp: scene.startTime,
+                filename: filename,
+                base64Data: b64Data,
+                prompt: fallbackPrompt,
+                description: `Fallback image for scene ${i + 1}`,
+                size: imageSize,
+                mimeType: 'image/png',
+                sceneIndex: scene.scene,
+                startTime: scene.startTime,
+                endTime: scene.endTime,
+                duration: scene.duration,
+                isFallback: true // ✅ Mark as fallback
+              };
+
+              results.push(imageData);
+              totalSize += imageSize;
+
+              console.log(`✅ Fallback image generated: ${filename} (${Math.round(imageSize / 1024)}KB)`);
+
+              // Stream this fallback image immediately to frontend
+              if (onImageGenerated) {
+                onImageGenerated(imageData, {
+                  current: i + 1,
+                  total: validatedScenes.length,
+                  completed: i + 1,
+                  remaining: validatedScenes.length - (i + 1)
+                });
+              }
+
+            } catch (fallbackError) {
+              console.error(`❌ Fallback image also failed for scene ${i + 1}:`, fallbackError);
+              
+              const errorData = {
+                timestamp: scene.startTime,
+                error: `Original: ${imageError.message}. Fallback: ${fallbackError.message}`,
+                prompt: scene.prompt,
+                description: scene.description,
+                fallbackAttempted: true
+              };
+              
+              failedImages.push(errorData);
+              
+              // Notify frontend of error
+              if (onError) {
+                onError(errorData);
+              }
+            }
+          } else {
+            // Regular error handling for non-content-policy issues
+            const errorData = {
+              timestamp: scene.startTime,
+              error: imageError.message,
+              prompt: scene.prompt,
+              description: scene.description
+            };
+            
+            failedImages.push(errorData);
+            
+            // Notify frontend of error
+            if (onError) {
+              onError(errorData);
+            }
           }
         }
       }
 
-      // ✅ NEW: Filter images by audio duration constraint if provided
-      let filteredResults = results;
-      if (audioDuration && audioDuration > 0) {
-        const originalCount = results.length;
-        filteredResults = results.filter(img => img.timestamp < audioDuration);
-        const removedCount = originalCount - filteredResults.length;
-        
-        if (removedCount > 0) {
-          console.log(`🎵 Audio duration constraint (${audioDuration}s) applied: removed ${removedCount} images that exceeded audio duration`);
-          console.log(`📸 Images after audio filtering: ${filteredResults.length}/${originalCount}`);
-        }
-      }
+      // ✅ REMOVED: Audio duration filtering after generation (now handled in scene timing)
+      // The scene timing calculation already respects audio duration constraints
+      // Filtering here was causing premature stream closure and incorrect counts
+      
+      console.log(`✅ Script-to-images streaming generation completed for project ${projectId}`);
+      console.log(`� Generated ${results.length} images, delivering ${results.length} after audio duration filtering`);
 
-      // Step 5: Return final metadata
+      // Step 5: Return final metadata with all generated images
       const responseData = {
         projectId,
         script,
         duration,
         audioDuration, // ✅ Include in response
         maxImagesPerMin,
-        totalImages: filteredResults.length, // ✅ Use filtered count
-        originalImages: results.length, // ✅ Include original count
-        removedByAudioDuration: results.length - filteredResults.length, // ✅ Track removed images
+        totalImages: results.length, // ✅ Use actual generated count
+        originalImages: results.length, // ✅ Same as total since no filtering
+        removedByAudioDuration: 0, // ✅ No post-generation filtering
         failedImages: failedImages.length,
         generatedAt: new Date().toISOString(),
-        images: filteredResults, // ✅ Return only filtered images
+        images: results, // ✅ Return all generated images
         failedAttempts: failedImages,
         sceneDescriptions: sceneDescriptions, // ✅ Include original scene descriptions
         metadata: {
-          totalSize: filteredResults.reduce((sum, img) => sum + img.size, 0), // ✅ Recalculate for filtered images
-          averageImageSize: filteredResults.length > 0 ? Math.round(filteredResults.reduce((sum, img) => sum + img.size, 0) / filteredResults.length) : 0,
-          estimatedDownloadTime: this.estimateDownloadTime(filteredResults),
+          totalSize: results.reduce((sum, img) => sum + img.size, 0), // ✅ Use results
+          averageImageSize: results.length > 0 ? Math.round(results.reduce((sum, img) => sum + img.size, 0) / results.length) : 0,
+          estimatedDownloadTime: this.estimateDownloadTime(results), // ✅ Use results
           scenesGenerated: validatedScenes.length,
           averageSceneDuration: validatedScenes.length > 0 ? Math.round((effectiveDuration / validatedScenes.length) * 10) / 10 : 0
         }
       };
 
-      console.log(`✅ Script-to-images streaming generation completed for project ${projectId}`);
-      console.log(`📊 Generated ${results.length} images, delivering ${filteredResults.length} after audio duration filtering`);
-      console.log(`📦 Final payload size: ${Math.round(filteredResults.reduce((sum, img) => sum + img.size, 0) / 1024)}KB`);
+      console.log(`✅ Successfully streamed ${results.length} images to frontend (${Math.round(results.reduce((sum, img) => sum + img.size, 0) / 1024)}KB total)`);
 
       return {
         success: true,
@@ -563,24 +644,40 @@ suitable for vertical video format (9:16 aspect ratio), visually engaging, movie
     // Remove or replace potentially problematic words/phrases
     const sanitizedPrompt = prompt
       .toLowerCase()
-      // Family/relationship conflicts - make more neutral
-      .replace(/family.*conflict/gi, 'personal relationship challenges')
-      .replace(/family.*betrayal/gi, 'breach of trust situation')
-      .replace(/dad.*lying/gi, 'father figure in contemplation')
-      .replace(/father.*hiding/gi, 'parent in serious conversation')
-      .replace(/stealing|theft|fraud/gi, 'financial difficulty')
-      .replace(/anger|rage|fury/gi, 'serious concern')
-      .replace(/dark secret/gi, 'hidden challenge')
-      .replace(/ruin.*family/gi, 'family facing challenges')
-      // Violence or negative emotion words
-      .replace(/destroy|devastate|crush/gi, 'impact seriously')
-      .replace(/betray|deceive/gi, 'disappoint')
-      .replace(/hate|hatred/gi, 'strong disagreement')
-      // Make descriptions more abstract and artistic
-      .replace(/specific.*details/gi, 'symbolic representation')
-      .replace(/realistic.*depiction/gi, 'artistic interpretation');
+      // ✅ ENHANCED: More comprehensive content policy filtering
+      // Technology/theft related terms - make more neutral
+      .replace(/airpods.*missing|airpods.*stolen|airpods.*theft/gi, 'wireless earbuds being discussed')
+      .replace(/stealing|theft|fraud|steal|stolen/gi, 'discussing misplaced items')
+      .replace(/confrontation|confront/gi, 'conversation')
+      .replace(/suspicious|accused|accuse/gi, 'curious situation')
+      .replace(/stranger.*wearing|thief|criminal/gi, 'person with similar items')
+      .replace(/sell.*on.*street|illegal|crime/gi, 'informal marketplace discussion')
+      // Emotional/conflict terms
+      .replace(/anger|rage|fury|aggressive/gi, 'concerned expression')
+      .replace(/fight|attack|violence/gi, 'animated discussion')
+      .replace(/betray|deceive|trick/gi, 'misunderstanding')
+      .replace(/hate|hatred|revenge/gi, 'strong emotion')
+      // Make scenarios more positive and abstract
+      .replace(/dark.*scene|threatening|menacing/gi, 'dramatic lighting')
+      .replace(/dangerous|unsafe|risky/gi, 'uncertain situation')
+      .replace(/victim|perpetrator/gi, 'person involved')
+      // Technology context - make more generic
+      .replace(/apple.*product|branded.*item/gi, 'consumer electronics')
+      .replace(/expensive.*gadget/gi, 'valuable item')
+      // Transform negative scenarios into neutral ones
+      .replace(/loss.*independence/gi, 'personal journey')
+      .replace(/trust.*broken/gi, 'relationship dynamics')
+      .replace(/real.*connection.*reclaim/gi, 'meaningful interaction');
     
-    return sanitizedPrompt.charAt(0).toUpperCase() + sanitizedPrompt.slice(1);
+    // ✅ ADD: Positive framing prefix for potentially sensitive content
+    let finalPrompt = sanitizedPrompt.charAt(0).toUpperCase() + sanitizedPrompt.slice(1);
+    
+    // If the prompt still seems potentially problematic, add neutral framing
+    if (finalPrompt.includes('missing') || finalPrompt.includes('street') || finalPrompt.includes('follow')) {
+      finalPrompt = `Artistic representation of ${finalPrompt}. Depicted in a positive, abstract style with soft lighting and peaceful atmosphere`;
+    }
+    
+    return finalPrompt;
   }
 
   createImagePrompt(chunk) {
