@@ -4,6 +4,85 @@ const asyncHandler = require('../middleware/asyncHandler');
 // Initialize script-to-images service
 const scriptToImagesService = new ScriptToImagesService();
 
+// ✅ PRODUCTION FIX: Per-session SSE management for concurrent users
+class SSESessionManager {
+  constructor() {
+    this.sessions = new Map(); // sessionId -> session data
+    this.activeGenerations = new Map(); // projectId -> generation data
+    this.cleanupInterval = null;
+    this.startCleanup();
+  }
+
+  createSession(sessionData) {
+    const sessionId = `session_${Date.now()}_${Math.random().toString(36)}`;
+    this.sessions.set(sessionId, {
+      ...sessionData,
+      createdAt: Date.now(),
+      lastAccessed: Date.now()
+    });
+    
+    // Clean up old sessions (older than 1 hour)
+    this.cleanupSessions();
+    
+    return sessionId;
+  }
+
+  getSession(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.lastAccessed = Date.now();
+      return session;
+    }
+    return null;
+  }
+
+  deleteSession(sessionId) {
+    return this.sessions.delete(sessionId);
+  }
+
+  isProjectGenerating(projectId) {
+    return this.activeGenerations.has(projectId);
+  }
+
+  startGeneration(projectId, generationData) {
+    this.activeGenerations.set(projectId, {
+      ...generationData,
+      startedAt: Date.now()
+    });
+  }
+
+  finishGeneration(projectId) {
+    return this.activeGenerations.delete(projectId);
+  }
+
+  cleanupSessions() {
+    const oneHourAgo = Date.now() - (60 * 60 * 1000);
+    for (const [sessionId, session] of this.sessions) {
+      if (session.lastAccessed < oneHourAgo) {
+        this.sessions.delete(sessionId);
+      }
+    }
+  }
+
+  startCleanup() {
+    // Clean up every 30 minutes
+    this.cleanupInterval = setInterval(() => {
+      this.cleanupSessions();
+    }, 30 * 60 * 1000);
+  }
+
+  destroy() {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+    }
+    this.sessions.clear();
+    this.activeGenerations.clear();
+  }
+}
+
+// Global session manager instance
+const sseSessionManager = new SSESessionManager();
+
 /**
  * @desc    Generate images for script timeline (stream to frontend)
  * @route   POST /api/v1/script-images/generate-stream
@@ -37,6 +116,29 @@ const generateScriptImagesStream = asyncHandler(async (req, res, next) => {
     audioDuration, // ✅ Log audio duration
     scriptPreview: script ? script.substring(0, 200) + '...' : 'missing'
   });
+
+  // ✅ PRODUCTION FIX: Check if project is already generating
+  if (sseSessionManager.isProjectGenerating(projectId)) {
+    console.log(`⚠️ Project ${projectId} is already generating images, rejecting duplicate request`);
+    
+    if (req.method === 'GET') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache'
+      });
+      res.write(`data: ${JSON.stringify({
+        type: 'error',
+        error: 'Image generation already in progress for this project'
+      })}\n\n`);
+      res.end();
+      return;
+    } else {
+      return res.status(409).json({
+        success: false,
+        message: 'Image generation already in progress for this project'
+      });
+    }
+  }
 
   // For SSE, we need to validate token if provided via query params
   if (token && !req.user) {
@@ -94,19 +196,17 @@ const generateScriptImagesStream = asyncHandler(async (req, res, next) => {
 
   // Handle POST request to initialize SSE session data
   if (req.method === 'POST') {
-    // Store session data for SSE request (you might want to use Redis in production)
-    const sessionId = `session_${Date.now()}_${Math.random().toString(36)}`;
-    global.sseSessionData = global.sseSessionData || {};
-    global.sseSessionData[sessionId] = {
+    // ✅ PRODUCTION FIX: Use session manager instead of global variables
+    const sessionId = sseSessionManager.createSession({
       script,
       duration,
       maxImagesPerMin,
       projectId,
       userId: req.user.id || req.user.userId,
-      createdAt: Date.now()
-    };
+      audioDuration // ✅ CRITICAL: Include audio duration in session data
+    });
     
-    console.log(`✅ SSE session initialized: ${sessionId}`);
+    console.log(`✅ SSE session initialized: ${sessionId} for project: ${projectId} with audio duration: ${audioDuration}s`);
     return res.json({
       success: true,
       sessionId: sessionId,
@@ -138,7 +238,14 @@ const generateScriptImagesStream = asyncHandler(async (req, res, next) => {
   }
 
   try {
-    // Set up Server-Sent Events with production-ready headers and extended timeout
+    // ✅ PRODUCTION FIX: Mark project as generating to prevent concurrent requests
+    sseSessionManager.startGeneration(projectId, {
+      userId: req.user.id || req.user.userId,
+      script: script.substring(0, 100) + '...',
+      audioDuration
+    });
+
+    // Set up Server-Sent Events with production-ready headers and extended timeout for concurrent users
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -146,33 +253,62 @@ const generateScriptImagesStream = asyncHandler(async (req, res, next) => {
       'Access-Control-Allow-Origin': process.env.NODE_ENV === 'production' ? process.env.FRONTEND_URL || 'tauri://localhost' : '*',
       'Access-Control-Allow-Headers': 'Cache-Control',
       'Access-Control-Allow-Credentials': 'true',
-      'X-Accel-Buffering': 'no' // Disable nginx buffering for real-time streaming
+      'X-Accel-Buffering': 'no', // Disable nginx buffering for real-time streaming
+      'Keep-Alive': 'timeout=600' // 10 minute keep-alive for long-running generations
     });
 
-    // Set extended timeout for SSE connection (5 minutes)
-    res.setTimeout(300000, () => {
-      console.log('⏰ SSE connection timeout reached, closing connection');
-      res.write(`data: ${JSON.stringify({
-        type: 'error',
-        error: 'Connection timeout - image generation may still be processing in background'
-      })}\n\n`);
-      res.end();
-    });
-
-    // Keep connection alive with periodic heartbeat
-    const heartbeat = setInterval(() => {
+    // ✅ PRODUCTION-READY: Extended timeout for SSE connection (15 minutes) to handle concurrent users
+    // Complex OpenAI image generation can take 5-10 minutes per project with multiple users
+    const connectionTimeout = setTimeout(() => {
+      console.log('⏰ SSE connection timeout reached after 15 minutes, closing connection');
+      sseSessionManager.finishGeneration(projectId); // Clean up
+      
       if (!res.destroyed) {
         res.write(`data: ${JSON.stringify({
-          type: 'heartbeat',
-          timestamp: Date.now()
+          type: 'error',
+          error: 'Connection timeout - server may be handling multiple concurrent requests'
         })}\n\n`);
+        res.end();
       }
-    }, 30000); // Send heartbeat every 30 seconds
+    }, 15 * 60 * 1000); // 15 minute timeout for production with concurrent users
 
-    // Clean up heartbeat on connection close
-    res.on('close', () => {
+    // ✅ CONCURRENT USER SUPPORT: Enhanced heartbeat with connection monitoring
+    const heartbeat = setInterval(() => {
+      if (!res.destroyed) {
+        // Send heartbeat with connection info for debugging concurrent connections
+        res.write(`data: ${JSON.stringify({
+          type: 'heartbeat',
+          timestamp: Date.now(),
+          projectId: projectId,
+          activeConnections: sseSessionManager.sessions.size,
+          serverLoad: process.memoryUsage().heapUsed / 1024 / 1024 // MB
+        })}\n\n`);
+      } else {
+        clearInterval(heartbeat);
+        clearTimeout(connectionTimeout);
+      }
+    }, 45000); // Send heartbeat every 45 seconds (longer interval for better performance with concurrent users)
+
+    // ✅ PRODUCTION: Enhanced connection cleanup for concurrent users
+    const cleanup = () => {
       clearInterval(heartbeat);
-      console.log('🔗 SSE connection closed');
+      clearTimeout(connectionTimeout);
+      sseSessionManager.finishGeneration(projectId);
+      console.log(`🔗 SSE connection cleaned up for project: ${projectId} (active sessions: ${sseSessionManager.sessions.size})`);
+    };
+
+    // Clean up on various connection close events
+    res.on('close', cleanup);
+    res.on('finish', cleanup);
+    res.on('error', (error) => {
+      console.error(`❌ SSE connection error for project ${projectId}:`, error.message);
+      cleanup();
+    });
+
+    // ✅ PRODUCTION: Handle client disconnect gracefully
+    req.on('close', () => {
+      console.log(`🔌 Client disconnected for project: ${projectId}`);
+      cleanup();
     });
 
     // Send initial status
